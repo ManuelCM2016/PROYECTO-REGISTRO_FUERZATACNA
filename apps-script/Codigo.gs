@@ -587,46 +587,55 @@ function handleGetStats() {
 }
 
 function handleUpdateMilitante(payload) {
-  const { rowIndex, telefono, nombres, apellidos, dni, base, estado_registro, canal_registro } = payload;
-  const sheet = getSheet(SHEET_MILITANTES);
-  if (!sheet) return jsonResponse({ success: false, error: 'No se encontró la pestaña de Militantes' });
-  
-  let targetRow = rowIndex;
-  
-  if (!targetRow && telefono) {
-    const data = sheet.getDataRange().getValues();
-    for (let i = 1; i < data.length; i++) {
-      let phoneInSheet = data[i][COL_M.ID_WHATSAPP];
-      if (String(phoneInSheet).includes('#ERROR')) {
-        phoneInSheet = checkAndRepairPhoneCell(sheet, i + 1, phoneInSheet);
-      }
-      if (isPhoneMatch(phoneInSheet, telefono)) {
-        targetRow = i + 1;
-        break;
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(15000);
+
+    const { rowIndex, telefono, nombres, apellidos, dni, base, estado_registro, canal_registro } = payload;
+    const sheet = getSheet(SHEET_MILITANTES);
+    if (!sheet) return jsonResponse({ success: false, error: 'No se encontró la pestaña de Militantes' });
+    
+    let targetRow = rowIndex;
+    
+    if (!targetRow && telefono) {
+      const data = sheet.getDataRange().getValues();
+      for (let i = 1; i < data.length; i++) {
+        let phoneInSheet = data[i][COL_M.ID_WHATSAPP];
+        if (String(phoneInSheet).includes('#ERROR')) {
+          phoneInSheet = checkAndRepairPhoneCell(sheet, i + 1, phoneInSheet);
+        }
+        if (isPhoneMatch(phoneInSheet, telefono)) {
+          targetRow = i + 1;
+          break;
+        }
       }
     }
+    
+    if (!targetRow) return jsonResponse({ success: false, error: 'Militante no encontrado' });
+    
+    if (telefono !== undefined) {
+      const cleanP = String(telefono).replace(/^'+/, '').trim();
+      sheet.getRange(targetRow, COL_M.ID_WHATSAPP + 1).setNumberFormat('@').setValue("'" + cleanP);
+    }
+    if (nombres !== undefined) sheet.getRange(targetRow, COL_M.NOMBRES + 1).setValue(nombres);
+    if (apellidos !== undefined) sheet.getRange(targetRow, COL_M.APELLIDOS + 1).setValue(apellidos);
+    if (dni !== undefined) {
+      const cleanD = String(dni).replace(/\D/g, '').trim();
+      sheet.getRange(targetRow, COL_M.DNI + 1).setNumberFormat('@').setValue("'" + cleanD);
+    }
+    if (base !== undefined) sheet.getRange(targetRow, COL_M.BASE + 1).setValue(base);
+    if (estado_registro !== undefined) {
+      sheet.getRange(targetRow, COL_M.ESTADO_REGISTRO + 1).setValue(estado_registro);
+      styleStatusCell(sheet, targetRow, estado_registro);
+    }
+    if (canal_registro !== undefined) sheet.getRange(targetRow, COL_M.CANAL_REGISTRO + 1).setValue(canal_registro);
+    
+    return jsonResponse({ success: true, message: 'Militante actualizado correctamente', rowIndex: targetRow });
+  } catch(err) {
+    return jsonResponse({ success: false, error: 'Error al actualizar militante: ' + err.toString() });
+  } finally {
+    try { lock.releaseLock(); } catch(e) {}
   }
-  
-  if (!targetRow) return jsonResponse({ success: false, error: 'Militante no encontrado' });
-  
-  if (telefono !== undefined) {
-    const cleanP = String(telefono).replace(/^'+/, '').trim();
-    sheet.getRange(targetRow, COL_M.ID_WHATSAPP + 1).setNumberFormat('@').setValue("'" + cleanP);
-  }
-  if (nombres !== undefined) sheet.getRange(targetRow, COL_M.NOMBRES + 1).setValue(nombres);
-  if (apellidos !== undefined) sheet.getRange(targetRow, COL_M.APELLIDOS + 1).setValue(apellidos);
-  if (dni !== undefined) {
-    const cleanD = String(dni).replace(/\D/g, '').trim();
-    sheet.getRange(targetRow, COL_M.DNI + 1).setNumberFormat('@').setValue("'" + cleanD);
-  }
-  if (base !== undefined) sheet.getRange(targetRow, COL_M.BASE + 1).setValue(base);
-  if (estado_registro !== undefined) {
-    sheet.getRange(targetRow, COL_M.ESTADO_REGISTRO + 1).setValue(estado_registro);
-    styleStatusCell(sheet, targetRow, estado_registro);
-  }
-  if (canal_registro !== undefined) sheet.getRange(targetRow, COL_M.CANAL_REGISTRO + 1).setValue(canal_registro);
-  
-  return jsonResponse({ success: true, message: 'Militante actualizado correctamente', rowIndex: targetRow });
 }
 
 function handleApproveMilitante(payload) {
@@ -646,103 +655,123 @@ function handleRejectMilitante(payload) {
 }
 
 function handleAddMilitante(payload) {
-  const { telefono, nombres, apellidos, dni, base, estado_registro, canal_registro } = payload;
-  if (!telefono) return jsonResponse({ success: false, error: 'Teléfono requerido' });
-  
-  const sheet = getSheet(SHEET_MILITANTES);
-  if (!sheet) return jsonResponse({ success: false, error: 'No se encontró la pestaña de Militantes' });
-  
-  const data = sheet.getDataRange().getValues();
-  
-  for (let i = 1; i < data.length; i++) {
-    let phoneInSheet = data[i][COL_M.ID_WHATSAPP];
-    if (String(phoneInSheet).includes('#ERROR')) {
-      phoneInSheet = checkAndRepairPhoneCell(sheet, i + 1, phoneInSheet);
-    }
-    if (isPhoneMatch(phoneInSheet, telefono)) {
-      return jsonResponse({ success: false, error: 'El teléfono ya está registrado' });
-    }
-  }
-  
-  if (dni) {
-    const cleanDni = String(dni).replace(/\D/g, '').trim();
-    if (cleanDni.length >= 8) {
-      for (let i = 1; i < data.length; i++) {
-        const rowDni = String(data[i][COL_M.DNI] || '').replace(/\D/g, '').trim();
-        if (rowDni && rowDni === cleanDni) {
-          return jsonResponse({ 
-            success: false, 
-            error: 'El DNI ya se encuentra registrado en el padrón. No se permite duplicar registros.' 
-          });
-        }
-      }
-    }
-  }
-  
-  const finalStatus = estado_registro || 'pendiente';
-  const cleanPhone = String(telefono).replace(/^'+/, '').trim();
-  const safePhone = cleanPhone.startsWith('+') ? "'" + cleanPhone : cleanPhone;
-  const cleanDni = dni ? String(dni).replace(/\D/g, '').trim() : '';
-  const safeDni = cleanDni ? "'" + cleanDni : '';
-  
-  const newRow = [
-    safePhone,
-    nombres || '',
-    apellidos || '',
-    safeDni,
-    base || '',
-    finalStatus,
-    canal_registro || ''
-  ];
-  
-  sheet.appendRow(newRow);
-  const newRowIndex = sheet.getLastRow();
-  
-  sheet.getRange(newRowIndex, COL_M.ID_WHATSAPP + 1).setNumberFormat('@');
-  if (dni) {
-    sheet.getRange(newRowIndex, COL_M.DNI + 1).setNumberFormat('@');
-  }
-  
-  styleStatusCell(sheet, newRowIndex, finalStatus);
-  
-  return jsonResponse({ 
-    success: true, 
-    message: 'Militante agregado correctamente',
-    rowIndex: newRowIndex
-  });
-}
+  const lock = LockService.getScriptLock();
+  try {
+    // Bloqueo atómico: espera hasta 15 segundos para exclusión mutua
+    lock.waitLock(15000);
 
-function handleDeleteMilitante(payload) {
-  const { rowIndex, telefono } = payload;
-  const sheet = getSheet(SHEET_MILITANTES);
-  if (!sheet) return jsonResponse({ success: false, error: 'No se encontró la pestaña de Militantes' });
-  
-  let targetRow = rowIndex;
-  
-  // Si no hay rowIndex, o para verificar, buscar por teléfono
-  if (!targetRow && telefono) {
+    const { telefono, nombres, apellidos, dni, base, estado_registro, canal_registro } = payload;
+    if (!telefono) return jsonResponse({ success: false, error: 'Teléfono requerido' });
+    
+    const sheet = getSheet(SHEET_MILITANTES);
+    if (!sheet) return jsonResponse({ success: false, error: 'No se encontró la pestaña de Militantes' });
+    
+    // Re-leer datos DENTRO del lock para tener el estado más reciente
     const data = sheet.getDataRange().getValues();
+    
     for (let i = 1; i < data.length; i++) {
       let phoneInSheet = data[i][COL_M.ID_WHATSAPP];
       if (String(phoneInSheet).includes('#ERROR')) {
         phoneInSheet = checkAndRepairPhoneCell(sheet, i + 1, phoneInSheet);
       }
       if (isPhoneMatch(phoneInSheet, telefono)) {
-        targetRow = i + 1;
-        break;
+        return jsonResponse({ success: false, error: 'El teléfono ya está registrado' });
       }
     }
+    
+    if (dni) {
+      const cleanDni = String(dni).replace(/\D/g, '').trim();
+      if (cleanDni.length >= 8) {
+        for (let i = 1; i < data.length; i++) {
+          const rowDni = String(data[i][COL_M.DNI] || '').replace(/\D/g, '').trim();
+          if (rowDni && rowDni === cleanDni) {
+            return jsonResponse({ 
+              success: false, 
+              error: 'El DNI ya se encuentra registrado en el padrón. No se permite duplicar registros.' 
+            });
+          }
+        }
+      }
+    }
+    
+    const finalStatus = estado_registro || 'pendiente';
+    const cleanPhone = String(telefono).replace(/^'+/, '').trim();
+    const safePhone = cleanPhone.startsWith('+') ? "'" + cleanPhone : cleanPhone;
+    const cleanDni = dni ? String(dni).replace(/\D/g, '').trim() : '';
+    const safeDni = cleanDni ? "'" + cleanDni : '';
+    
+    const newRow = [
+      safePhone,
+      nombres || '',
+      apellidos || '',
+      safeDni,
+      base || '',
+      finalStatus,
+      canal_registro || ''
+    ];
+    
+    sheet.appendRow(newRow);
+    const newRowIndex = sheet.getLastRow();
+    
+    sheet.getRange(newRowIndex, COL_M.ID_WHATSAPP + 1).setNumberFormat('@');
+    if (dni) {
+      sheet.getRange(newRowIndex, COL_M.DNI + 1).setNumberFormat('@');
+    }
+    
+    styleStatusCell(sheet, newRowIndex, finalStatus);
+    
+    return jsonResponse({ 
+      success: true, 
+      message: 'Militante agregado correctamente',
+      rowIndex: newRowIndex
+    });
+  } catch(err) {
+    return jsonResponse({ success: false, error: 'Error al agregar militante: ' + err.toString() });
+  } finally {
+    try { lock.releaseLock(); } catch(e) {}
   }
-  
-  if (!targetRow || targetRow <= 1) {
-    return jsonResponse({ success: false, error: 'Militante no encontrado para eliminar' });
+}
+
+function handleDeleteMilitante(payload) {
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(15000);
+
+    const { rowIndex, telefono } = payload;
+    const sheet = getSheet(SHEET_MILITANTES);
+    if (!sheet) return jsonResponse({ success: false, error: 'No se encontró la pestaña de Militantes' });
+    
+    let targetRow = rowIndex;
+    
+    // Si no hay rowIndex, o para verificar, buscar por teléfono
+    if (!targetRow && telefono) {
+      const data = sheet.getDataRange().getValues();
+      for (let i = 1; i < data.length; i++) {
+        let phoneInSheet = data[i][COL_M.ID_WHATSAPP];
+        if (String(phoneInSheet).includes('#ERROR')) {
+          phoneInSheet = checkAndRepairPhoneCell(sheet, i + 1, phoneInSheet);
+        }
+        if (isPhoneMatch(phoneInSheet, telefono)) {
+          targetRow = i + 1;
+          break;
+        }
+      }
+    }
+    
+    if (!targetRow || targetRow <= 1) {
+      return jsonResponse({ success: false, error: 'Militante no encontrado para eliminar' });
+    }
+    
+    sheet.deleteRow(targetRow);
+    return jsonResponse({ 
+      success: true, 
+      message: 'Militante eliminado correctamente de la base de datos' 
+    });
+  } catch(err) {
+    return jsonResponse({ success: false, error: 'Error al eliminar militante: ' + err.toString() });
+  } finally {
+    try { lock.releaseLock(); } catch(e) {}
   }
-  
-  sheet.deleteRow(targetRow);
-  return jsonResponse({ 
-    success: true, 
-    message: 'Militante eliminado correctamente de la base de datos' 
-  });
 }
 
 // ============ USUARIOS ============

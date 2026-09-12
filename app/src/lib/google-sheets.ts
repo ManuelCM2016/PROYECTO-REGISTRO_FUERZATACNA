@@ -14,18 +14,45 @@ import type {
 
 const APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
 
-function checkResponseText(text: string): void {
-  if (
-    text.includes('accounts.google.com') ||
-    text.includes('Sign in - Google Accounts') ||
-    text.includes('<!doctype html>') ||
-    text.includes('<html')
-  ) {
-    throw new Error(
-      'Google Apps Script requiere acceso público. En Apps Script, ve a: Implementar > Administrar implementaciones > icono Lápiz (Editar) > Versión: "Nueva versión" > en "Quién tiene acceso" selecciona "Cualquier persona" (no "Solo yo").'
-    );
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// ============================================
+// Semáforo de concurrencia para proteger Google Apps Script
+// Limita a 20 llamadas simultáneas para no saturar el límite de 30 de GAS
+// ============================================
+class ConcurrencySemaphore {
+  private current = 0;
+  private readonly max: number;
+  private queue: Array<() => void> = [];
+
+  constructor(max: number) {
+    this.max = max;
+  }
+
+  async acquire(): Promise<void> {
+    if (this.current < this.max) {
+      this.current++;
+      return;
+    }
+    // Esperar en cola hasta que un slot se libere
+    return new Promise<void>((resolve) => {
+      this.queue.push(() => {
+        this.current++;
+        resolve();
+      });
+    });
+  }
+
+  release(): void {
+    this.current--;
+    const next = this.queue.shift();
+    if (next) next();
   }
 }
+
+const gasSemaphore = new ConcurrencySemaphore(20);
 
 // ============================================
 // Cache en Memoria para consultas de alta velocidad
@@ -52,17 +79,17 @@ export function invalidateCache(actionKeys?: string[]): void {
 async function appsScriptGet<T>(
   action: string,
   params: Record<string, string> = {},
-  options: { ttlSeconds?: number; forceFresh?: boolean } = {}
+  options: { ttlSeconds?: number; forceFresh?: boolean; retries?: number } = {}
 ): Promise<T> {
   if (!APPS_SCRIPT_URL) {
     throw new Error('APPS_SCRIPT_URL no está configurada en .env.local');
   }
 
-  const { ttlSeconds = 25, forceFresh = false } = options;
+  const { ttlSeconds = 25, forceFresh = false, retries = 2 } = options;
   const cacheKey = `${action}:${JSON.stringify(params)}`;
   const now = Date.now();
 
-  // 1. Revisar si tenemos respuesta fresca en memoria
+  // 1. Revisar si tenemos respuesta fresca en memoria (sin consumir slot del semáforo)
   if (!forceFresh && ttlSeconds > 0) {
     const cached = memoryCache.get(cacheKey);
     if (cached && cached.expiresAt > now) {
@@ -76,38 +103,73 @@ async function appsScriptGet<T>(
     url.searchParams.set(key, value);
   });
 
-  const response = await fetch(url.toString(), {
-    method: 'GET',
-    redirect: 'follow',
-    cache: 'no-store',
-  });
+  // Adquirir slot del semáforo antes de llamar a Google Apps Script
+  await gasSemaphore.acquire();
 
-  const text = await response.text();
-  checkResponseText(text);
+  let lastError: unknown = null;
+  const maxAttempts = 1 + retries;
 
   try {
-    const data = JSON.parse(text) as T;
-    // Guardar en caché si la respuesta fue exitosa
-    if (ttlSeconds > 0 && data && typeof data === 'object' && (data as any).success !== false) {
-      memoryCache.set(cacheKey, {
-        data,
-        expiresAt: now + ttlSeconds * 1000,
-      });
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const response = await fetch(url.toString(), {
+          method: 'GET',
+          redirect: 'follow',
+          cache: 'no-store',
+        });
+
+        const text = await response.text();
+
+        // Detectar respuesta HTML (Arranque en frío de Google Apps Script, redirección intermedia o sobrecarga)
+        const isHtmlResponse =
+          text.includes('accounts.google.com') ||
+          text.includes('Sign in - Google Accounts') ||
+          text.includes('<!doctype html>') ||
+          text.includes('<html');
+
+        if (isHtmlResponse) {
+          if (attempt < maxAttempts) {
+            // El primer intento despierta al contenedor de Google; reintentamos en breve
+            await delay(600 * attempt);
+            continue;
+          } else {
+            console.error(`[Google Apps Script Cold-Start / HTML error]: ${text.substring(0, 250)}`);
+            throw new Error('El servidor tardó en responder. Por favor, pulsa el botón nuevamente.');
+          }
+        }
+
+        const data = JSON.parse(text) as T;
+        // Guardar en caché si la respuesta fue exitosa
+        if (ttlSeconds > 0 && data && typeof data === 'object' && (data as any).success !== false) {
+          memoryCache.set(cacheKey, {
+            data,
+            expiresAt: Date.now() + ttlSeconds * 1000,
+          });
+        }
+        return data;
+      } catch (err) {
+        lastError = err;
+        if (attempt < maxAttempts) {
+          await delay(600 * attempt);
+        }
+      }
     }
-    return data;
-  } catch {
-    throw new Error(`Error al procesar respuesta de Google Apps Script: ${text.substring(0, 200)}`);
+  } finally {
+    gasSemaphore.release();
   }
+
+  const errorMsg = lastError instanceof Error ? lastError.message : 'Error de conexión con el padrón';
+  throw new Error(errorMsg);
 }
 
-async function appsScriptPost<T>(payload: Record<string, unknown>): Promise<T> {
+async function appsScriptPost<T>(payload: Record<string, unknown>, retries = 2): Promise<T> {
   if (!APPS_SCRIPT_URL) {
     throw new Error('APPS_SCRIPT_URL no está configurada en .env.local');
   }
 
   const action = String(payload.action || '');
 
-  // Invalidación inteligente antes/después de la mutación
+  // Invalidación inteligente antes de la mutación
   if (action.includes('Militante')) {
     invalidateCache(['getMilitantes', 'getStats', 'searchMilitantes', 'findByPhone', 'checkDni']);
   } else if (action.includes('Evento')) {
@@ -118,33 +180,75 @@ async function appsScriptPost<T>(payload: Record<string, unknown>): Promise<T> {
     invalidateCache(['getUsuarios', 'findUsuario']);
   }
 
-  const response = await fetch(APPS_SCRIPT_URL, {
-    method: 'POST',
-    body: JSON.stringify(payload),
-    headers: {
-      'Content-Type': 'text/plain',
-    },
-    redirect: 'follow',
-  });
+  let lastError: unknown = null;
+  const maxAttempts = 1 + retries;
 
-  const text = await response.text();
-  checkResponseText(text);
+  // Adquirir slot del semáforo antes de llamar a Google Apps Script
+  await gasSemaphore.acquire();
 
   try {
-    const result = JSON.parse(text) as T;
-    // Invalidación confirmada
-    if (action.includes('Militante')) {
-      invalidateCache(['getMilitantes', 'getStats', 'searchMilitantes', 'findByPhone', 'checkDni']);
-    } else if (action.includes('Evento')) {
-      invalidateCache(['getEventos', 'getEventoById', 'getAsistencia']);
-    } else if (action.includes('Asistencia')) {
-      invalidateCache(['getAsistencia', 'checkAsistencia', 'getEventos', 'getEventoById']);
-    } else if (action.includes('Usuario')) {
-      invalidateCache(['getUsuarios', 'findUsuario']);
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const response = await fetch(APPS_SCRIPT_URL, {
+          method: 'POST',
+          body: JSON.stringify(payload),
+          headers: {
+            'Content-Type': 'text/plain',
+          },
+          redirect: 'follow',
+        });
+
+        const text = await response.text();
+
+        const isHtmlResponse =
+          text.includes('accounts.google.com') ||
+          text.includes('Sign in - Google Accounts') ||
+          text.includes('<!doctype html>') ||
+          text.includes('<html');
+
+        if (isHtmlResponse) {
+          if (attempt < maxAttempts) {
+            await delay(600 * attempt);
+            continue;
+          } else {
+            console.error(`[Google Apps Script POST HTML error]: ${text.substring(0, 250)}`);
+            throw new Error('El servidor tardó en procesar la solicitud. Por favor, intenta de nuevo.');
+          }
+        }
+
+        const result = JSON.parse(text) as T;
+        // Invalidación confirmada
+        if (action.includes('Militante')) {
+          invalidateCache(['getMilitantes', 'getStats', 'searchMilitantes', 'findByPhone', 'checkDni']);
+        } else if (action.includes('Evento')) {
+          invalidateCache(['getEventos', 'getEventoById', 'getAsistencia']);
+        } else if (action.includes('Asistencia')) {
+          invalidateCache(['getAsistencia', 'checkAsistencia', 'getEventos', 'getEventoById']);
+        } else if (action.includes('Usuario')) {
+          invalidateCache(['getUsuarios', 'findUsuario']);
+        }
+        return result;
+      } catch (err) {
+        lastError = err;
+        if (attempt < maxAttempts) {
+          await delay(600 * attempt);
+        }
+      }
     }
-    return result;
+  } finally {
+    gasSemaphore.release();
+  }
+
+  const errorMsg = lastError instanceof Error ? lastError.message : 'Error de conexión al procesar la acción';
+  throw new Error(errorMsg);
+}
+
+export async function warmupAppsScript(): Promise<boolean> {
+  try {
+    const res = await appsScriptGet<{ success: boolean }>('ping', {}, { ttlSeconds: 60, retries: 1 });
+    return Boolean(res && res.success);
   } catch {
-    throw new Error(`Error al procesar respuesta de Google Apps Script: ${text.substring(0, 200)}`);
+    return false;
   }
 }
 

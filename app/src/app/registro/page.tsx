@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, FormEvent } from 'react';
+import { useState, useEffect, useRef, FormEvent } from 'react';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import Select from '@/components/ui/Select';
@@ -8,7 +8,7 @@ import CarnetDigital from '@/components/CarnetDigital';
 import { useToast } from '@/components/ui/Toast';
 import { PREFIJOS_TELEFONICOS, BASES_DISPONIBLES } from '@/lib/constants';
 
-type Step = 'phone' | 'form' | 'success' | 'already_registered' | 'in_review';
+type Step = 'phone' | 'form' | 'success' | 'already_registered' | 'in_review' | 'rejected';
 
 interface MilitanteData {
   id_whatsapp: string;
@@ -54,6 +54,15 @@ export default function RegistroPage() {
   // Datos para confirmación / QR
   const [registeredData, setRegisteredData] = useState<MilitanteData | null>(null);
 
+  // Guardias anti doble-click (useRef sobrevive al ciclo de render)
+  const verifyInFlight = useRef(false);
+  const submitInFlight = useRef(false);
+
+  // Pre-calentamiento silencioso en segundo plano para despertar a Google Apps Script
+  useEffect(() => {
+    fetch('/api/militantes/verificar?warmup=true').catch(() => {});
+  }, []);
+
   const rawDigits = phoneNumber.replace(/\D/g, '');
   const countryDigits = prefix.replace(/\D/g, '');
   const cleanDigits = rawDigits.startsWith(countryDigits) && rawDigits.length > countryDigits.length
@@ -71,6 +80,10 @@ export default function RegistroPage() {
       setErrors({ phone: 'Ingresa un número de teléfono válido (mínimo 8-9 dígitos)' });
       return;
     }
+
+    // Anti doble-click: si ya hay una petición en vuelo, ignorar
+    if (verifyInFlight.current) return;
+    verifyInFlight.current = true;
 
     setLoading(true);
     setErrors({});
@@ -91,7 +104,8 @@ export default function RegistroPage() {
         setRegisteredData(data.data);
         setStep('in_review');
       } else if (data.status === 'rechazado') {
-        addToast('error', 'Esta solicitud de registro no fue admitida por el administrador.');
+        setRegisteredData(data.data || null);
+        setStep('rejected');
       } else if (data.status === 'pendiente' || data.found) {
         // Teléfono existe y está pendiente
         setFormData({
@@ -120,6 +134,7 @@ export default function RegistroPage() {
       addToast('error', 'Error de conexión. Intenta de nuevo.');
     } finally {
       setLoading(false);
+      verifyInFlight.current = false;
     }
   };
 
@@ -167,29 +182,59 @@ export default function RegistroPage() {
     setDniAutofilled(false);
     setDniLookupNotice(null);
 
-    // Cuando completa 8 dígitos, verificar duplicado en tiempo real y consultar RENIEC
+    // Cuando completa 8 dígitos, verificar duplicado + consultar RENIEC en paralelo
     if (clean.length === 8) {
       setDniChecking(true);
-      try {
-        // 1. Validar que no esté ya registrado en el padrón local de Fuerza Tacna
-        const res = await fetch(`/api/militantes/check-dni?dni=${clean}`);
-        const data = await res.json();
+      setDniLoadingExternal(true);
 
-        if (data.success && data.found) {
-          setDniDuplicateError(
-            `El DNI ${clean} ya se encuentra registrado en el padrón de Fuerza Tacna. Por motivos de seguridad no se permite alterar información registrada. Por favor, comunícate con el administrador.`
-          );
-          setDniChecking(false);
-          return;
+      try {
+        // Ejecutar ambas consultas en paralelo para reducir tiempo de espera
+        const [checkResult, reniecResult] = await Promise.allSettled([
+          fetch(`/api/militantes/check-dni?dni=${clean}`).then(r => r.json()),
+          fetch(`/api/consulta-dni?dni=${clean}`).then(r => r.json()),
+        ]);
+
+        // 1. Procesar resultado de verificación de duplicado
+        if (checkResult.status === 'fulfilled') {
+          const checkData = checkResult.value;
+          if (checkData.success && checkData.found) {
+            setDniDuplicateError(
+              `El DNI ${clean} ya se encuentra registrado en el padrón de Fuerza Tacna. Por motivos de seguridad no se permite alterar información registrada. Por favor, comunícate con el administrador.`
+            );
+            setDniChecking(false);
+            setDniLoadingExternal(false);
+            return; // No autocompletar si es duplicado
+          }
+        }
+        setDniChecking(false);
+
+        // 2. Procesar resultado de RENIEC (solo si no es duplicado)
+        if (reniecResult.status === 'fulfilled') {
+          const reniecData = reniecResult.value;
+          if (reniecData.success && reniecData.data) {
+            setFormData((prev) => ({
+              ...prev,
+              nombres: reniecData.data.nombres || prev.nombres,
+              apellidos: reniecData.data.apellidos || prev.apellidos,
+            }));
+            setErrors((prev) => ({ ...prev, nombres: '', apellidos: '' }));
+            setDniAutofilled(true);
+            setDniLookupNotice(null);
+            addToast('success', `Datos obtenidos: ${reniecData.data.nombres} ${reniecData.data.apellidos}`);
+          } else if (reniecData.notFound) {
+            setDniLookupNotice('DNI no encontrado en la base de datos de RENIEC. Puedes ingresar tus nombres manualmente.');
+          } else if (reniecData.configured === false) {
+            setDniLookupNotice(null);
+          } else {
+            setDniLookupNotice(reniecData.error || 'No se pudo consultar RENIEC en este momento. Ingresa tus datos manualmente.');
+          }
         }
       } catch {
-        // Continuar
+        // Fallback silencioso
       } finally {
         setDniChecking(false);
+        setDniLoadingExternal(false);
       }
-
-      // 2. Si no es duplicado, jalar datos automáticamente de la API DNI
-      await consultarDniApi(clean);
     }
   };
 
@@ -201,6 +246,10 @@ export default function RegistroPage() {
       addToast('warning', 'No puedes registrar un DNI que ya existe en el padrón');
       return;
     }
+
+    // Anti doble-click: si ya hay una petición en vuelo, ignorar
+    if (submitInFlight.current) return;
+    submitInFlight.current = true;
 
     // Validaciones
     const newErrors: Record<string, string> = {};
@@ -219,6 +268,7 @@ export default function RegistroPage() {
 
     if (Object.keys(newErrors).length > 0) {
       setErrors(newErrors);
+      submitInFlight.current = false;
       return;
     }
 
@@ -284,6 +334,7 @@ export default function RegistroPage() {
       addToast('error', 'Error de conexión. Intenta de nuevo.');
     } finally {
       setLoading(false);
+      submitInFlight.current = false;
     }
   };
 
@@ -392,7 +443,7 @@ export default function RegistroPage() {
             </div>
 
             <Button type="submit" loading={loading} className="w-full" size="lg" variant="accent">
-              Verificar Número
+              {loading ? 'Verificando en el padrón...' : 'Verificar Número'}
             </Button>
           </form>
         </div>
@@ -658,6 +709,43 @@ export default function RegistroPage() {
           <Button onClick={handleReset} variant="secondary" className="w-full">
             ← Volver al Inicio
           </Button>
+        </div>
+      )}
+
+      {/* ========== PASO 3C: SOLICITUD OBSERVADA / NO ADMITIDA ========== */}
+      {step === 'rejected' && (
+        <div className="glass-card rounded-3xl p-6 sm:p-8 text-center border-2 border-red-500/40 glow-brand">
+          <div className="mb-4">
+            <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-red-500 via-rose-600 to-red-700 flex items-center justify-center mx-auto shadow-xl shadow-red-500/30 text-white">
+              <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+            </div>
+          </div>
+
+          <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-bold bg-red-500/20 text-red-300 border border-red-400/40 mb-3">
+            Estado: Observado / No Admitido
+          </div>
+
+          <h2 className="text-2xl font-black text-[#f8f9f9] mb-2">Solicitud Observada</h2>
+          <p className="text-primary-200/90 text-sm mb-6 leading-relaxed max-w-md mx-auto">
+            El número <strong className="text-red-300 font-mono">{fullPhone}</strong> figura en el padrón con estado no admitido u observado por la administración.
+          </p>
+
+          <div className="p-4 mb-6 rounded-2xl bg-surface-850/90 border border-primary-200/10 text-xs text-primary-200/80 text-left space-y-2">
+            <p className="font-bold text-primary-100 flex items-center gap-1.5">
+              <span>ℹ️</span> ¿Deseas consultar o actualizar tu expediente?
+            </p>
+            <p className="leading-relaxed">
+              Si consideras que se trata de un error o deseas renovar tu solicitud de incorporación a Fuerza Tacna, puedes comunicarte directamente con la coordinación general.
+            </p>
+          </div>
+
+          <div className="space-y-3">
+            <Button onClick={handleReset} variant="secondary" className="w-full">
+              ← Intentar con otro número
+            </Button>
+          </div>
         </div>
       )}
 
