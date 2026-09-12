@@ -9,8 +9,7 @@ export const PREFIJOS_TELEFONICOS = [
 
 export const BASES_DISPONIBLES = [
   'Gregorio Albarracín, ASOC. PROMUVI',
-  'Taller Vivienda, ASOC. FUNDO PARA',
-  'DANZA LLAMERADA',
+
 ];
 
 export const ESTADOS_REGISTRO = {
