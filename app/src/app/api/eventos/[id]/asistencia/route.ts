@@ -27,6 +27,9 @@ export async function GET(
   }
 }
 
+// Cache en memoria para evitar registros concurrentes duplicados en ráfaga
+const recentAsistenciaLocks = new Map<string, number>();
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -49,6 +52,29 @@ export async function POST(
         { success: false, error: 'El DNI debe contener al menos 8 dígitos' },
         { status: 400 }
       );
+    }
+
+    // CANDADO DE CONCURRENCIA: Impide registros duplicados si llegan peticiones concurrentes del mismo DNI
+    const lockKey = `${id}:${cleanDni}`;
+    const now = Date.now();
+    const lastAttempt = recentAsistenciaLocks.get(lockKey);
+
+    if (lastAttempt && (now - lastAttempt) < 8000) {
+      return NextResponse.json({
+        success: false,
+        alreadyMarked: true,
+        message: `La asistencia para el DNI ${cleanDni} ya fue procesada hace unos instantes.`,
+        data: { dni: cleanDni }
+      });
+    }
+
+    recentAsistenciaLocks.set(lockKey, now);
+
+    // Limpieza periódica de claves viejas
+    if (recentAsistenciaLocks.size > 500) {
+      for (const [k, t] of recentAsistenciaLocks.entries()) {
+        if (now - t > 30000) recentAsistenciaLocks.delete(k);
+      }
     }
 
     const validMetodos = ['qr_puerta', 'scan_admin', 'manual'];

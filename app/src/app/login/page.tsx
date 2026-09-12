@@ -35,7 +35,13 @@ export default function LoginPage() {
       const data = await res.json();
 
       if (data.success) {
-        addToast('success', `Bienvenido, ${data.data.username}`);
+        const fullName = [data.data.nombres, data.data.apellidos].filter(Boolean).join(' ') || data.data.username;
+        const cargoText = data.data.cargo ? ` (${data.data.cargo})` : '';
+        addToast('success', `¡Bienvenido(a) a Fuerza Tacna, ${fullName}!${cargoText}`);
+        sessionStorage.setItem('just_logged_in', JSON.stringify({
+          name: fullName,
+          cargo: data.data.cargo || '',
+        }));
         router.push('/dashboard/militantes');
       } else {
         addToast('error', data.error || 'Credenciales incorrectas');

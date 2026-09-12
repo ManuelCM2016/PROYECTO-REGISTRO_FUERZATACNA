@@ -1,7 +1,6 @@
 'use client';
 
-import { useState, FormEvent, useEffect } from 'react';
-import { QRCodeSVG } from 'qrcode.react';
+import { useState, FormEvent } from 'react';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import Select from '@/components/ui/Select';
@@ -42,8 +41,11 @@ export default function RegistroPage() {
     base: '',
   });
 
-  // Validación DNI duplicado
+  // Validación DNI duplicado y consulta externa RENIEC
   const [dniChecking, setDniChecking] = useState(false);
+  const [dniLoadingExternal, setDniLoadingExternal] = useState(false);
+  const [dniAutofilled, setDniAutofilled] = useState(false);
+  const [dniLookupNotice, setDniLookupNotice] = useState<string | null>(null);
   const [dniDuplicateError, setDniDuplicateError] = useState<string | null>(null);
 
   // Errores de validación
@@ -121,17 +123,55 @@ export default function RegistroPage() {
     }
   };
 
-  // ---- Manejar cambio de DNI y verificar duplicados ----
+  // ---- Consulta a la API externa de DNI (RENIEC) ----
+  const consultarDniApi = async (dniToSearch: string) => {
+    if (dniToSearch.length !== 8) return;
+    setDniLoadingExternal(true);
+    setDniLookupNotice(null);
+
+    try {
+      const res = await fetch(`/api/consulta-dni?dni=${dniToSearch}`);
+      const data = await res.json();
+
+      if (data.success && data.data) {
+        setFormData((prev) => ({
+          ...prev,
+          nombres: data.data.nombres || prev.nombres,
+          apellidos: data.data.apellidos || prev.apellidos,
+        }));
+        setErrors((prev) => ({ ...prev, nombres: '', apellidos: '' }));
+        setDniAutofilled(true);
+        setDniLookupNotice(null);
+        addToast('success', `Datos obtenidos: ${data.data.nombres} ${data.data.apellidos}`);
+      } else if (data.notFound) {
+        setDniLookupNotice('DNI no encontrado en la base de datos de RENIEC. Puedes ingresar tus nombres manualmente.');
+      } else if (data.configured === false) {
+        // Credenciales aún no colocadas en .env.local
+        setDniLookupNotice(null);
+      } else {
+        setDniLookupNotice(data.error || 'No se pudo consultar RENIEC en este momento. Ingresa tus datos manualmente.');
+      }
+    } catch {
+      // Fallback silencioso sin bloquear al usuario
+    } finally {
+      setDniLoadingExternal(false);
+    }
+  };
+
+  // ---- Manejar cambio de DNI, verificar duplicados y autocompletar ----
   const handleDniChange = async (val: string) => {
     const clean = val.replace(/\D/g, '').slice(0, 8);
     setFormData((prev) => ({ ...prev, dni: clean }));
     setErrors((prev) => ({ ...prev, dni: '' }));
     setDniDuplicateError(null);
+    setDniAutofilled(false);
+    setDniLookupNotice(null);
 
-    // Cuando completa 8 dígitos, verificar duplicado en tiempo real
+    // Cuando completa 8 dígitos, verificar duplicado en tiempo real y consultar RENIEC
     if (clean.length === 8) {
       setDniChecking(true);
       try {
+        // 1. Validar que no esté ya registrado en el padrón local de Fuerza Tacna
         const res = await fetch(`/api/militantes/check-dni?dni=${clean}`);
         const data = await res.json();
 
@@ -139,12 +179,17 @@ export default function RegistroPage() {
           setDniDuplicateError(
             `El DNI ${clean} ya se encuentra registrado en el padrón de Fuerza Tacna. Por motivos de seguridad no se permite alterar información registrada. Por favor, comunícate con el administrador.`
           );
+          setDniChecking(false);
+          return;
         }
       } catch {
-        // Fallback silencioso si la red falla
+        // Continuar
       } finally {
         setDniChecking(false);
       }
+
+      // 2. Si no es duplicado, jalar datos automáticamente de la API DNI
+      await consultarDniApi(clean);
     }
   };
 
@@ -252,17 +297,6 @@ export default function RegistroPage() {
     setRegisteredData(null);
     setIsNewMilitante(false);
   };
-
-  // ---- QR Data (solo para aprobados) ----
-  const qrData = registeredData
-    ? JSON.stringify({
-      dni: registeredData.dni,
-      nombres: registeredData.nombres,
-      apellidos: registeredData.apellidos,
-      base: registeredData.base,
-      telefono: registeredData.id_whatsapp,
-    })
-    : '';
 
   return (
     <div
@@ -406,15 +440,57 @@ export default function RegistroPage() {
                 maxLength={8}
                 inputMode="numeric"
                 icon={
-                  dniChecking ? (
-                    <div className="w-4 h-4 border-2 border-primary-400/30 border-t-primary-400 rounded-full animate-spin" />
+                  (dniChecking || dniLoadingExternal) ? (
+                    <div className="w-4 h-4 border-2 border-accent-400/30 border-t-accent-400 rounded-full animate-spin" />
+                  ) : dniAutofilled ? (
+                    <svg className="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                    </svg>
                   ) : (
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V8a2 2 0 00-2-2h-5m-4 0V5a2 2 0 114 0v1m-4 0a2 2 0 104 0" />
                     </svg>
                   )
                 }
+                rightElement={
+                  dniLoadingExternal ? (
+                    <span className="flex items-center gap-1 text-[11px] text-accent-400 font-medium bg-accent-500/10 px-2 py-0.5 rounded-md border border-accent-500/20">
+                      <div className="w-2.5 h-2.5 border-2 border-accent-400/30 border-t-accent-400 rounded-full animate-spin" />
+                      RENIEC...
+                    </span>
+                  ) : dniAutofilled ? (
+                    <span className="flex items-center gap-1 text-[11px] text-emerald-400 font-semibold bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/20">
+                      ✓ Autocompletado
+                    </span>
+                  ) : formData.dni.length === 8 && !dniDuplicateError ? (
+                    <button
+                      type="button"
+                      onClick={() => consultarDniApi(formData.dni)}
+                      className="text-[11px] text-accent-400 hover:text-accent-300 font-bold bg-accent-500/20 hover:bg-accent-500/30 px-2 py-0.5 rounded-md transition-colors border border-accent-400/30"
+                    >
+                      Consultar
+                    </button>
+                  ) : null
+                }
               />
+
+              {/* Mensaje de éxito de autocompletado */}
+              {dniAutofilled && (
+                <div className="mt-2 px-3 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center gap-2 text-xs text-emerald-300 animate-fadeIn">
+                  <svg className="w-4 h-4 text-emerald-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <span>Nombres y apellidos validados y completados con RENIEC. Puedes revisarlos antes de continuar.</span>
+                </div>
+              )}
+
+              {/* Aviso si RENIEC no devolvió datos */}
+              {dniLookupNotice && (
+                <div className="mt-2 px-3 py-2 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center gap-2 text-xs text-amber-200">
+                  <span className="text-amber-400 text-sm">ℹ️</span>
+                  <span>{dniLookupNotice}</span>
+                </div>
+              )}
 
               {/* ALERTA DE DNI DUPLICADO (BLOQUEO) */}
               {dniDuplicateError && (

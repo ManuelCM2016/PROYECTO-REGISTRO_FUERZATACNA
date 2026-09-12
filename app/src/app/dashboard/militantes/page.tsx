@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useCallback, FormEvent, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
-import { QRCodeSVG } from 'qrcode.react';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import Select from '@/components/ui/Select';
@@ -14,7 +13,7 @@ import { BASES_DISPONIBLES } from '@/lib/constants';
 import CarnetDigital from '@/components/CarnetDigital';
 import type { Militante, StatsData } from '@/types';
 
-type FilterStatus = 'todos' | 'en_revision' | 'completado' | 'pendiente';
+type FilterStatus = 'todos' | 'en_revision' | 'completado' | 'pendiente' | 'inactivo';
 
 function MilitantesContent() {
   const { addToast } = useToast();
@@ -31,13 +30,15 @@ function MilitantesContent() {
   // Filter state
   const statusParam = searchParams.get('estado');
   const [statusFilter, setStatusFilter] = useState<FilterStatus>(
-    statusParam === 'en_revision' ? 'en_revision' : 'todos'
+    statusParam === 'en_revision' ? 'en_revision' : statusParam === 'inactivo' ? 'inactivo' : 'todos'
   );
 
   // Sync filter with URL param
   useEffect(() => {
     if (statusParam === 'en_revision') {
       setStatusFilter('en_revision');
+    } else if (statusParam === 'inactivo') {
+      setStatusFilter('inactivo');
     }
   }, [statusParam]);
 
@@ -51,6 +52,11 @@ function MilitantesContent() {
   const [selectedMilitante, setSelectedMilitante] = useState<Militante | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
 
+  // Delete / Inactivate confirmation modal state
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [militanteToDelete, setMilitanteToDelete] = useState<Militante | null>(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+
   // Form state
   const [formData, setFormData] = useState({
     telefono: '',
@@ -63,6 +69,11 @@ function MilitantesContent() {
   });
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
+
+  // Consulta DNI externa (RENIEC / Decolecta) en Modal
+  const [dniLoadingExternal, setDniLoadingExternal] = useState(false);
+  const [dniAutofilled, setDniAutofilled] = useState(false);
+  const [dniNotice, setDniNotice] = useState<string | null>(null);
 
   // Pagination
   const [currentPage, setCurrentPage] = useState(1);
@@ -204,6 +215,77 @@ function MilitantesContent() {
     }
   };
 
+  // ---- Inactivar / Reactivar / Eliminar ----
+  const openDeleteModal = (m: Militante) => {
+    setMilitanteToDelete(m);
+    setDeleteModalOpen(true);
+  };
+
+  const handleToggleInactivo = async (m: Militante, newStatus: 'inactivo' | 'completado') => {
+    setActionLoading(true);
+    try {
+      const cleanPhone = m.id_whatsapp.replace(/[^\d+]/g, '');
+      const res = await fetch(`/api/militantes/${encodeURIComponent(cleanPhone)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          rowIndex: m.rowIndex,
+          estado_registro: newStatus,
+        }),
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        addToast(
+          'success',
+          newStatus === 'inactivo'
+            ? `Militante ${m.nombres || m.id_whatsapp} marcado como Inactivo`
+            : `Militante ${m.nombres || m.id_whatsapp} reactivado correctamente`
+        );
+        if (detailModalOpen && selectedMilitante) {
+          setSelectedMilitante({ ...selectedMilitante, estado_registro: newStatus });
+        }
+        if (deleteModalOpen) {
+          setDeleteModalOpen(false);
+        }
+        await loadData();
+      } else {
+        addToast('error', data.error || 'Error al cambiar estado del militante');
+      }
+    } catch {
+      addToast('error', 'Error de conexión');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handlePermanentDelete = async (m: Militante) => {
+    setDeleteLoading(true);
+    try {
+      const cleanPhone = m.id_whatsapp.replace(/[^\d+]/g, '');
+      const res = await fetch(
+        `/api/militantes/${encodeURIComponent(cleanPhone)}${m.rowIndex ? `?rowIndex=${m.rowIndex}` : ''}`,
+        {
+          method: 'DELETE',
+        }
+      );
+
+      const data = await res.json();
+      if (data.success) {
+        addToast('success', `Registro de ${m.nombres || m.id_whatsapp} eliminado definitivamente de Google Sheets`);
+        setDeleteModalOpen(false);
+        setDetailModalOpen(false);
+        await loadData();
+      } else {
+        addToast('error', data.error || 'Error al eliminar registro');
+      }
+    } catch {
+      addToast('error', 'Error de conexión al eliminar');
+    } finally {
+      setDeleteLoading(false);
+    }
+  };
+
   // ---- Abrir modal detalle ----
   const openDetailModal = (militante: Militante) => {
     setSelectedMilitante(militante);
@@ -216,6 +298,9 @@ function MilitantesContent() {
     setEditingMilitante(null);
     setFormData({ telefono: '', prefix: '+51', phoneDigits: '', nombres: '', apellidos: '', dni: '', base: '' });
     setFormErrors({});
+    setDniLoadingExternal(false);
+    setDniAutofilled(false);
+    setDniNotice(null);
     setModalOpen(true);
   };
 
@@ -232,7 +317,54 @@ function MilitantesContent() {
       base: militante.base || '',
     });
     setFormErrors({});
+    setDniLoadingExternal(false);
+    setDniAutofilled(false);
+    setDniNotice(null);
     setModalOpen(true);
+  };
+
+  // Consulta externa a RENIEC (Decolecta) para autocompletar nombres y apellidos
+  const consultarDniApiModal = async (dniToSearch: string) => {
+    if (dniToSearch.length !== 8) return;
+    setDniLoadingExternal(true);
+    setDniNotice(null);
+
+    try {
+      const res = await fetch(`/api/consulta-dni?dni=${dniToSearch}`);
+      const data = await res.json();
+
+      if (data.success && data.data) {
+        setFormData((prev) => ({
+          ...prev,
+          nombres: data.data.nombres || prev.nombres,
+          apellidos: data.data.apellidos || prev.apellidos,
+        }));
+        setFormErrors((prev) => ({ ...prev, nombres: '', apellidos: '' }));
+        setDniAutofilled(true);
+        setDniNotice(null);
+        addToast('success', `Datos de RENIEC obtenidos: ${data.data.nombres} ${data.data.apellidos}`);
+      } else if (data.notFound) {
+        setDniNotice('DNI no encontrado en RENIEC. Ingrésalo manualmente.');
+      } else {
+        setDniNotice(data.error || 'No se pudo consultar RENIEC. Puedes ingresar los datos manualmente.');
+      }
+    } catch {
+      // Continuar sin bloquear
+    } finally {
+      setDniLoadingExternal(false);
+    }
+  };
+
+  const handleDniChangeModal = async (val: string) => {
+    const clean = val.replace(/\D/g, '').slice(0, 8);
+    setFormData((prev) => ({ ...prev, dni: clean }));
+    setFormErrors((prev) => ({ ...prev, dni: '' }));
+    setDniAutofilled(false);
+    setDniNotice(null);
+
+    if (clean.length === 8) {
+      await consultarDniApiModal(clean);
+    }
   };
 
   const handleFormSubmit = async (e: FormEvent) => {
@@ -317,6 +449,7 @@ function MilitantesContent() {
     if (statusFilter === 'en_revision') return m.estado_registro === 'en_revision';
     if (statusFilter === 'completado') return m.estado_registro === 'completado';
     if (statusFilter === 'pendiente') return m.estado_registro === 'pendiente';
+    if (statusFilter === 'inactivo') return m.estado_registro === 'inactivo';
     return true;
   });
 
@@ -332,6 +465,8 @@ function MilitantesContent() {
     setCurrentPage(1);
     if (newFilter === 'en_revision') {
       router.replace('/dashboard/militantes?estado=en_revision');
+    } else if (newFilter === 'inactivo') {
+      router.replace('/dashboard/militantes?estado=inactivo');
     } else {
       router.replace('/dashboard/militantes');
     }
@@ -545,6 +680,16 @@ function MilitantesContent() {
           >
             Pendientes ({stats?.pendientes || 0})
           </button>
+          <button
+            onClick={() => selectFilter('inactivo')}
+            className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap cursor-pointer ${
+              statusFilter === 'inactivo'
+                ? 'bg-slate-700 text-slate-100 shadow-sm'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
+            }`}
+          >
+            Inactivos ({stats?.inactivos || 0})
+          </button>
         </div>
 
         {/* Input Buscador */}
@@ -616,12 +761,13 @@ function MilitantesContent() {
                     const isInReview = m.estado_registro === 'en_revision';
                     const isCompleted = m.estado_registro === 'completado';
                     const isRejected = m.estado_registro === 'rechazado';
+                    const isInactive = m.estado_registro === 'inactivo';
 
                     return (
                       <tr
                         key={`${m.id_whatsapp}-${i}`}
                         className={`border-b border-white/5 hover:bg-white/[0.02] transition-colors ${
-                          isInReview ? 'bg-amber-500/[0.03]' : ''
+                          isInReview ? 'bg-amber-500/[0.03]' : isInactive ? 'bg-slate-900/40 opacity-75' : ''
                         }`}
                       >
                         <td className="px-4 py-3 text-sm text-slate-300 font-mono">
@@ -644,6 +790,10 @@ function MilitantesContent() {
                           ) : isCompleted ? (
                             <Badge variant="success" dot>
                               Completado
+                            </Badge>
+                          ) : isInactive ? (
+                            <Badge variant="inactivo" dot>
+                              Inactivo
                             </Badge>
                           ) : isRejected ? (
                             <Badge variant="danger" dot>
@@ -686,15 +836,47 @@ function MilitantesContent() {
                               <>
                                 <button
                                   onClick={() => openDetailModal(m)}
-                                  className="text-primary-400 hover:text-primary-300 text-sm font-medium px-2 py-1 rounded hover:bg-white/5 transition-colors cursor-pointer"
+                                  className="text-primary-400 hover:text-primary-300 text-xs font-semibold px-2 py-1 rounded hover:bg-white/5 transition-colors cursor-pointer"
                                 >
                                   {isCompleted ? 'Credencial' : 'Detalles'}
                                 </button>
                                 <button
                                   onClick={() => openEditModal(m)}
-                                  className="text-slate-400 hover:text-white text-sm px-2 py-1 rounded hover:bg-white/5 transition-colors cursor-pointer"
+                                  className="text-slate-400 hover:text-white text-xs px-2 py-1 rounded hover:bg-white/5 transition-colors cursor-pointer"
                                 >
                                   Editar
+                                </button>
+                                {/* Botón Inactivar / Reactivar */}
+                                {isInactive ? (
+                                  <button
+                                    onClick={() => handleToggleInactivo(m, 'completado')}
+                                    className="p-1.5 rounded-lg text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10 border border-emerald-500/20 transition-all cursor-pointer"
+                                    title="Reactivar militante"
+                                  >
+                                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                    </svg>
+                                  </button>
+                                ) : (
+                                  <button
+                                    onClick={() => handleToggleInactivo(m, 'inactivo')}
+                                    className="p-1.5 rounded-lg text-slate-400 hover:text-amber-300 hover:bg-amber-500/10 border border-white/5 transition-all cursor-pointer"
+                                    title="Marcar como Inactivo"
+                                  >
+                                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                    </svg>
+                                  </button>
+                                )}
+                                {/* Botón Eliminar */}
+                                <button
+                                  onClick={() => openDeleteModal(m)}
+                                  className="p-1.5 rounded-lg text-red-400 hover:text-red-300 hover:bg-red-500/10 border border-red-500/20 transition-all cursor-pointer"
+                                  title="Eliminar registro del padrón"
+                                >
+                                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                  </svg>
                                 </button>
                               </>
                             )}
@@ -845,7 +1027,7 @@ function MilitantesContent() {
             )}
 
             {/* Botones de acción */}
-            <div className="flex gap-3 pt-2">
+            <div className="flex flex-wrap gap-2.5 pt-2">
               {selectedMilitante.estado_registro === 'en_revision' ? (
                 <>
                   <Button
@@ -868,14 +1050,45 @@ function MilitantesContent() {
                   </Button>
                 </>
               ) : (
-                <Button
-                  type="button"
-                  variant="secondary"
-                  onClick={() => setDetailModalOpen(false)}
-                  className="w-full"
-                >
-                  Cerrar
-                </Button>
+                <>
+                  {selectedMilitante.estado_registro === 'inactivo' ? (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      loading={actionLoading}
+                      onClick={() => handleToggleInactivo(selectedMilitante, 'completado')}
+                      className="flex-1 text-xs"
+                    >
+                      ⟲ Reactivar Militante
+                    </Button>
+                  ) : (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      loading={actionLoading}
+                      onClick={() => handleToggleInactivo(selectedMilitante, 'inactivo')}
+                      className="flex-1 text-xs"
+                    >
+                      ⏸️ Marcar Inactivo
+                    </Button>
+                  )}
+                  <Button
+                    type="button"
+                    variant="danger"
+                    onClick={() => openDeleteModal(selectedMilitante)}
+                    className="text-xs px-3"
+                  >
+                    🗑️ Eliminar
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setDetailModalOpen(false)}
+                    className="text-xs px-4"
+                  >
+                    Cerrar
+                  </Button>
+                </>
               )}
             </div>
           </div>
@@ -928,17 +1141,64 @@ function MilitantesContent() {
             />
           )}
 
-          <Input
-            label="DNI (8 dígitos)"
-            placeholder="12345678"
-            value={formData.dni}
-            onChange={(e) => {
-              setFormData({ ...formData, dni: e.target.value.replace(/\D/g, '').slice(0, 8) });
-              setFormErrors({ ...formErrors, dni: '' });
-            }}
-            error={formErrors.dni}
-            maxLength={8}
-          />
+          <div>
+            <Input
+              label="DNI (8 dígitos)"
+              placeholder="12345678"
+              value={formData.dni}
+              onChange={(e) => handleDniChangeModal(e.target.value)}
+              error={formErrors.dni}
+              maxLength={8}
+              inputMode="numeric"
+              icon={
+                dniLoadingExternal ? (
+                  <div className="w-4 h-4 border-2 border-accent-400/30 border-t-accent-400 rounded-full animate-spin" />
+                ) : dniAutofilled ? (
+                  <svg className="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                  </svg>
+                ) : (
+                  <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V8a2 2 0 00-2-2h-5m-4 0V5a2 2 0 114 0v1m-4 0a2 2 0 104 0" />
+                  </svg>
+                )
+              }
+              rightElement={
+                dniLoadingExternal ? (
+                  <span className="flex items-center gap-1 text-[11px] text-accent-400 font-medium bg-accent-500/10 px-2 py-0.5 rounded-md border border-accent-500/20">
+                    <div className="w-2.5 h-2.5 border-2 border-accent-400/30 border-t-accent-400 rounded-full animate-spin" />
+                    RENIEC...
+                  </span>
+                ) : dniAutofilled ? (
+                  <span className="flex items-center gap-1 text-[11px] text-emerald-400 font-semibold bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/20">
+                    ✓ RENIEC
+                  </span>
+                ) : formData.dni.length === 8 ? (
+                  <button
+                    type="button"
+                    onClick={() => consultarDniApiModal(formData.dni)}
+                    className="text-[11px] text-accent-400 hover:text-accent-300 font-bold bg-accent-500/20 hover:bg-accent-500/30 px-2 py-0.5 rounded-md transition-colors border border-accent-400/30"
+                  >
+                    Consultar
+                  </button>
+                ) : null
+              }
+            />
+
+            {/* Mensaje de confirmación de autocompletado */}
+            {dniAutofilled && (
+              <p className="mt-1.5 text-xs text-emerald-400 flex items-center gap-1">
+                <span>✓ Nombres y apellidos autocompletados con RENIEC</span>
+              </p>
+            )}
+
+            {/* Aviso en caso de no encontrar */}
+            {dniNotice && (
+              <p className="mt-1.5 text-xs text-amber-300 flex items-center gap-1">
+                <span>ℹ️ {dniNotice}</span>
+              </p>
+            )}
+          </div>
 
           <Input
             label="Nombres"
@@ -988,6 +1248,99 @@ function MilitantesContent() {
             </Button>
           </div>
         </form>
+      </Modal>
+
+      {/* Modal de Confirmación: Inactivar vs Eliminar Definitivamente de Google Sheets */}
+      <Modal
+        isOpen={deleteModalOpen}
+        onClose={() => setDeleteModalOpen(false)}
+        title="Gestión de Baja de Militante"
+        size="md"
+      >
+        {militanteToDelete && (
+          <div className="space-y-4">
+            <div className="p-3.5 rounded-xl bg-red-500/10 border border-red-500/20 flex items-start gap-3">
+              <span className="text-xl leading-none mt-0.5">⚠️</span>
+              <div className="text-xs text-red-200">
+                <p className="font-bold text-red-300">
+                  ¿Qué acción deseas realizar con este registro?
+                </p>
+                <p className="mt-1 text-slate-300">
+                  Militante:{' '}
+                  <span className="font-semibold text-white">
+                    {[militanteToDelete.nombres, militanteToDelete.apellidos].filter(Boolean).join(' ') ||
+                      militanteToDelete.id_whatsapp}
+                  </span>
+                  {militanteToDelete.dni && ` • DNI: ${militanteToDelete.dni}`}
+                  {militanteToDelete.base && ` • Base: ${militanteToDelete.base}`}
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              {/* Opción 1: Inactivar (Recomendada) */}
+              <div className="glass rounded-xl p-3.5 border border-white/10 hover:border-accent-400/40 transition-all">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-sm">⏸️</span>
+                      <p className="text-xs font-bold text-white">Opción 1: Marcar como Inactivo (Recomendado)</p>
+                    </div>
+                    <p className="text-[11px] text-slate-400 mt-1">
+                      Mantiene los datos en Google Sheets y el registro de asistencias, pero lo suspende del padrón activo. Puedes reactivarlo con un solo clic.
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    loading={actionLoading}
+                    onClick={() => handleToggleInactivo(militanteToDelete, 'inactivo')}
+                    className="shrink-0 text-xs"
+                  >
+                    Inactivar
+                  </Button>
+                </div>
+              </div>
+
+              {/* Opción 2: Eliminar definitivamente de Google Sheets */}
+              <div className="glass rounded-xl p-3.5 border border-red-500/30 bg-red-950/20 hover:border-red-500/50 transition-all">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-sm">🗑️</span>
+                      <p className="text-xs font-bold text-red-300">Opción 2: Eliminar definitivamente de Google Sheets</p>
+                    </div>
+                    <p className="text-[11px] text-red-200/70 mt-1">
+                      Borra permanentemente la fila en la hoja de cálculo. Esta acción no se puede deshacer.
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="danger"
+                    size="sm"
+                    loading={deleteLoading}
+                    onClick={() => handlePermanentDelete(militanteToDelete)}
+                    className="shrink-0 text-xs"
+                  >
+                    Eliminar Fila
+                  </Button>
+                </div>
+              </div>
+            </div>
+
+            <div className="pt-2 flex justify-end">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setDeleteModalOpen(false)}
+              >
+                Cancelar
+              </Button>
+            </div>
+          </div>
+        )}
       </Modal>
     </div>
   );

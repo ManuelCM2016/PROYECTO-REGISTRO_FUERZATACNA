@@ -36,10 +36,6 @@ export default function EventoPuertaPage({ params }: { params: Promise<{ id: str
   const [resultState, setResultState] = useState<'idle' | 'success' | 'already' | 'not_found'>('idle');
   const [asistenciaData, setAsistenciaData] = useState<AsistenciaResult | null>(null);
 
-  useEffect(() => {
-    fetchEvento();
-  }, [eventoId]);
-
   const fetchEvento = async () => {
     setLoadingEvento(true);
     setEventoError(null);
@@ -58,8 +54,14 @@ export default function EventoPuertaPage({ params }: { params: Promise<{ id: str
     }
   };
 
+  useEffect(() => {
+    fetchEvento();
+  }, [eventoId]);
+
   const handleMarcarAsistencia = async (e: FormEvent) => {
     e.preventDefault();
+    if (submitting) return;
+
     const cleanDni = dni.replace(/\D/g, '').trim();
 
     if (cleanDni.length !== 8) {

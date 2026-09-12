@@ -46,7 +46,10 @@ const COL_U = {
   ID: 0,          // A
   USUARIO: 1,     // B
   CONTRASENA: 2,  // C
-  ROL: 3          // D
+  ROL: 3,         // D
+  NOMBRES: 4,     // E
+  APELLIDOS: 5,   // F
+  CARGO: 6        // G
 };
 
 // Columnas Eventos (0-indexed)
@@ -114,7 +117,7 @@ function getSheet(name) {
   // 5. Creación automática si no existe
   if (cleanTarget.includes('usuario')) {
     const newSheet = ss.insertSheet('Usuarios_Sistema');
-    newSheet.appendRow(['ID', 'USUARIO', 'CONTRASEÑA', 'ROL']);
+    newSheet.appendRow(['ID', 'USUARIO', 'CONTRASEÑA', 'ROL', 'NOMBRES', 'APELLIDOS', 'CARGO']);
     return newSheet;
   }
   
@@ -163,6 +166,10 @@ function styleStatusCell(sheet, rowIndex, status) {
     } else if (s === 'rechazado') {
       cell.setBackground('#FEE2E2'); // Rojo suave
       cell.setFontColor('#991B1B');  // Rojo oscuro
+      cell.setFontWeight('bold');
+    } else if (s === 'inactivo') {
+      cell.setBackground('#E2E8F0'); // Gris pizarra suave
+      cell.setFontColor('#475569');  // Texto gris oscuro
       cell.setFontWeight('bold');
     }
   } catch(e) {
@@ -339,6 +346,8 @@ function doPost(e) {
         return handleRejectMilitante(payload);
       case 'addMilitante':
         return handleAddMilitante(payload);
+      case 'deleteMilitante':
+        return handleDeleteMilitante(payload);
       
       // Usuarios
       case 'addUsuario':
@@ -556,6 +565,7 @@ function handleGetStats() {
   let pendientes = 0;
   let en_revision = 0;
   let rechazados = 0;
+  let inactivos = 0;
   
   for (let i = 1; i < data.length; i++) {
     const row = data[i];
@@ -566,12 +576,13 @@ function handleGetStats() {
     if (estado === 'en_revision') en_revision++;
     else if (estado === 'completado') completados++;
     else if (estado === 'rechazado') rechazados++;
+    else if (estado === 'inactivo') inactivos++;
     else pendientes++;
   }
   
   return jsonResponse({ 
     success: true, 
-    data: { total, completados, pendientes, en_revision, rechazados } 
+    data: { total, completados, pendientes, en_revision, rechazados, inactivos } 
   });
 }
 
@@ -701,6 +712,39 @@ function handleAddMilitante(payload) {
   });
 }
 
+function handleDeleteMilitante(payload) {
+  const { rowIndex, telefono } = payload;
+  const sheet = getSheet(SHEET_MILITANTES);
+  if (!sheet) return jsonResponse({ success: false, error: 'No se encontró la pestaña de Militantes' });
+  
+  let targetRow = rowIndex;
+  
+  // Si no hay rowIndex, o para verificar, buscar por teléfono
+  if (!targetRow && telefono) {
+    const data = sheet.getDataRange().getValues();
+    for (let i = 1; i < data.length; i++) {
+      let phoneInSheet = data[i][COL_M.ID_WHATSAPP];
+      if (String(phoneInSheet).includes('#ERROR')) {
+        phoneInSheet = checkAndRepairPhoneCell(sheet, i + 1, phoneInSheet);
+      }
+      if (isPhoneMatch(phoneInSheet, telefono)) {
+        targetRow = i + 1;
+        break;
+      }
+    }
+  }
+  
+  if (!targetRow || targetRow <= 1) {
+    return jsonResponse({ success: false, error: 'Militante no encontrado para eliminar' });
+  }
+  
+  sheet.deleteRow(targetRow);
+  return jsonResponse({ 
+    success: true, 
+    message: 'Militante eliminado correctamente de la base de datos' 
+  });
+}
+
 // ============ USUARIOS ============
 
 function handleGetUsuarios() {
@@ -718,7 +762,10 @@ function handleGetUsuarios() {
       rowIndex: i + 1,
       id: String(row[COL_U.ID] || i).trim(),
       usuario: String(row[COL_U.USUARIO] || '').trim(),
-      rol: String(row[COL_U.ROL] || '').trim().toLowerCase()
+      rol: String(row[COL_U.ROL] || '').trim().toLowerCase(),
+      nombres: String(row[COL_U.NOMBRES] || '').trim(),
+      apellidos: String(row[COL_U.APELLIDOS] || '').trim(),
+      cargo: String(row[COL_U.CARGO] || '').trim()
     });
   }
   
@@ -745,7 +792,10 @@ function handleFindUsuario(username) {
           id: String(row[COL_U.ID] || i).trim(),
           usuario: String(row[COL_U.USUARIO]).trim(),
           contrasena: String(row[COL_U.CONTRASENA]).trim(),
-          rol: String(row[COL_U.ROL] || '').trim().toLowerCase()
+          rol: String(row[COL_U.ROL] || '').trim().toLowerCase(),
+          nombres: String(row[COL_U.NOMBRES] || '').trim(),
+          apellidos: String(row[COL_U.APELLIDOS] || '').trim(),
+          cargo: String(row[COL_U.CARGO] || '').trim()
         }
       });
     }
@@ -755,8 +805,8 @@ function handleFindUsuario(username) {
 }
 
 function handleAddUsuario(payload) {
-  const { usuario, contrasena, rol } = payload;
-  if (!usuario || !contrasena || !rol) return jsonResponse({ success: false, error: 'Todos los campos son requeridos' });
+  const { usuario, contrasena, rol, nombres, apellidos, cargo } = payload;
+  if (!usuario || !contrasena || !rol) return jsonResponse({ success: false, error: 'Usuario, contraseña y rol son requeridos' });
   
   const sheet = getSheet(SHEET_USUARIOS);
   if (!sheet) return jsonResponse({ success: false, error: 'No se encontró la pestaña de Usuarios' });
@@ -771,7 +821,16 @@ function handleAddUsuario(payload) {
   }
   
   const newId = data.length > 1 ? data.length : 1;
-  sheet.appendRow([newId, usuario, contrasena, rol]);
+  const newRow = [
+    newId,
+    usuario,
+    contrasena,
+    rol,
+    nombres || '',
+    apellidos || '',
+    cargo || ''
+  ];
+  sheet.appendRow(newRow);
   
   return jsonResponse({ success: true, message: 'Usuario creado correctamente' });
 }
@@ -1042,147 +1101,159 @@ function handleCheckAsistencia(id_evento, dni) {
  * y que no se duplique la asistencia.
  */
 function handleMarcarAsistencia(payload) {
-  const { id_evento, dni, metodo } = payload;
-  
-  if (!id_evento || !dni) {
-    return jsonResponse({ success: false, error: 'id_evento y DNI son requeridos' });
-  }
-  
-  const cleanDni = String(dni).replace(/\D/g, '').trim();
-  if (cleanDni.length < 8) {
-    return jsonResponse({ success: false, error: 'El DNI debe tener al menos 8 dígitos' });
-  }
-  
-  // 1. Verificar Evento
-  const sheetEventos = getSheet(SHEET_EVENTOS);
-  if (!sheetEventos) return jsonResponse({ success: false, error: 'No se encontró la pestaña Eventos' });
-  
-  const dataEv = sheetEventos.getDataRange().getValues();
-  let eventoEncontrado = null;
-  
-  for (let i = 1; i < dataEv.length; i++) {
-    const row = dataEv[i];
-    if (String(row[COL_EV.ID_EVENTO] || '').trim() === String(id_evento).trim()) {
-      eventoEncontrado = {
-        id_evento: String(row[COL_EV.ID_EVENTO] || '').trim(),
-        titulo: String(row[COL_EV.TITULO] || '').trim(),
-        estado: String(row[COL_EV.ESTADO] || 'activo').trim().toLowerCase()
-      };
-      break;
-    }
-  }
-  
-  if (!eventoEncontrado) {
-    return jsonResponse({ success: false, error: 'El evento especificado no existe' });
-  }
-  
-  if (eventoEncontrado.estado === 'finalizado') {
-    return jsonResponse({ success: false, error: 'Este evento ya ha finalizado. No se reciben más registros.' });
-  }
-  
-  // 2. Buscar Militante en Padrón Oficial
-  const sheetMilitantes = getSheet(SHEET_MILITANTES);
-  if (!sheetMilitantes) return jsonResponse({ success: false, error: 'No se encontró la pestaña Base_Militantes' });
-  
-  const dataM = sheetMilitantes.getDataRange().getValues();
-  let militante = null;
-  
-  for (let i = 1; i < dataM.length; i++) {
-    const row = dataM[i];
-    const rowDni = String(row[COL_M.DNI] || '').replace(/\D/g, '').trim();
-    if (rowDni && rowDni === cleanDni) {
-      let phone = String(row[COL_M.ID_WHATSAPP] || '');
-      if (phone.includes('#ERROR')) {
-        phone = checkAndRepairPhoneCell(sheetMilitantes, i + 1, phone);
-      }
-      
-      militante = {
-        dni: rowDni,
-        nombres: String(row[COL_M.NOMBRES] || '').trim(),
-        apellidos: String(row[COL_M.APELLIDOS] || '').trim(),
-        base: String(row[COL_M.BASE] || '').trim(),
-        id_whatsapp: phone.trim(),
-        estado_registro: String(row[COL_M.ESTADO_REGISTRO] || '').trim().toLowerCase()
-      };
-      break;
-    }
-  }
-  
-  if (!militante) {
-    return jsonResponse({
-      success: false,
-      notFound: true,
-      error: 'El DNI ' + cleanDni + ' no figura registrado en el padrón oficial de Fuerza Tacna.'
-    });
-  }
-  
-  // 3. Verificar si ya marcó asistencia en este evento
-  const sheetAsist = getSheet(SHEET_ASISTENCIA);
-  if (!sheetAsist) return jsonResponse({ success: false, error: 'No se encontró la pestaña Asistencia' });
-  
-  const dataAs = sheetAsist.getDataRange().getValues();
-  for (let i = 1; i < dataAs.length; i++) {
-    const row = dataAs[i];
-    const evId = String(row[COL_AS.ID_EVENTO] || '').trim();
-    const rowDni = String(row[COL_AS.DNI] || '').replace(/\D/g, '').trim();
+  const lock = LockService.getScriptLock();
+  try {
+    // Bloqueo de concurrencia atómico: espera hasta 20 segundos para exclusión mutua
+    lock.waitLock(20000);
+
+    const { id_evento, dni, metodo } = payload;
     
-    if (evId === String(id_evento).trim() && rowDni === cleanDni) {
-      const horaPrevia = String(row[COL_AS.FECHA_HORA] || '').trim();
+    if (!id_evento || !dni) {
+      return jsonResponse({ success: false, error: 'id_evento y DNI son requeridos' });
+    }
+    
+    const cleanDni = String(dni).replace(/\D/g, '').trim();
+    if (cleanDni.length < 8) {
+      return jsonResponse({ success: false, error: 'El DNI debe tener al menos 8 dígitos' });
+    }
+    
+    // 1. Verificar Evento
+    const sheetEventos = getSheet(SHEET_EVENTOS);
+    if (!sheetEventos) return jsonResponse({ success: false, error: 'No se encontró la pestaña Eventos' });
+    
+    const dataEv = sheetEventos.getDataRange().getValues();
+    let eventoEncontrado = null;
+    
+    for (let i = 1; i < dataEv.length; i++) {
+      const row = dataEv[i];
+      if (String(row[COL_EV.ID_EVENTO] || '').trim() === String(id_evento).trim()) {
+        eventoEncontrado = {
+          id_evento: String(row[COL_EV.ID_EVENTO] || '').trim(),
+          titulo: String(row[COL_EV.TITULO] || '').trim(),
+          estado: String(row[COL_EV.ESTADO] || 'activo').trim().toLowerCase()
+        };
+        break;
+      }
+    }
+    
+    if (!eventoEncontrado) {
+      return jsonResponse({ success: false, error: 'El evento especificado no existe' });
+    }
+    
+    if (eventoEncontrado.estado === 'finalizado') {
+      return jsonResponse({ success: false, error: 'Este evento ya ha finalizado. No se reciben más registros.' });
+    }
+    
+    // 2. Buscar Militante en Padrón Oficial
+    const sheetMilitantes = getSheet(SHEET_MILITANTES);
+    if (!sheetMilitantes) return jsonResponse({ success: false, error: 'No se encontró la pestaña Base_Militantes' });
+    
+    const dataM = sheetMilitantes.getDataRange().getValues();
+    let militante = null;
+    
+    for (let i = 1; i < dataM.length; i++) {
+      const row = dataM[i];
+      const rowDni = String(row[COL_M.DNI] || '').replace(/\D/g, '').trim();
+      if (rowDni && rowDni === cleanDni) {
+        let phone = String(row[COL_M.ID_WHATSAPP] || '');
+        if (phone.includes('#ERROR')) {
+          phone = checkAndRepairPhoneCell(sheetMilitantes, i + 1, phone);
+        }
+        
+        militante = {
+          dni: rowDni,
+          nombres: String(row[COL_M.NOMBRES] || '').trim(),
+          apellidos: String(row[COL_M.APELLIDOS] || '').trim(),
+          base: String(row[COL_M.BASE] || '').trim(),
+          id_whatsapp: phone.trim(),
+          estado_registro: String(row[COL_M.ESTADO_REGISTRO] || '').trim().toLowerCase()
+        };
+        break;
+      }
+    }
+    
+    if (!militante) {
       return jsonResponse({
         success: false,
-        alreadyMarked: true,
-        message: `La asistencia de ${militante.nombres} ya fue registrada previamente a las ${horaPrevia}.`,
-        data: {
-          dni: cleanDni,
-          nombres: militante.nombres,
-          apellidos: militante.apellidos,
-          fecha_hora: horaPrevia
-        }
+        notFound: true,
+        error: 'El DNI ' + cleanDni + ' no figura registrado en el padrón oficial de Fuerza Tacna.'
       });
     }
-  }
-  
-  // 4. Registrar Asistencia
-  const idAsistencia = 'ASIST-' + new Date().getTime().toString(36).toUpperCase();
-  const nowStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone() || 'America/Lima', 'yyyy-MM-dd HH:mm:ss');
-  const safeMetodo = metodo || 'manual';
-  
-  const safePhone = militante.id_whatsapp.startsWith('+') ? "'" + militante.id_whatsapp : militante.id_whatsapp;
-  
-  const newRow = [
-    idAsistencia,
-    eventoEncontrado.id_evento,
-    eventoEncontrado.titulo,
-    "'" + cleanDni,
-    militante.nombres,
-    militante.apellidos,
-    militante.base,
-    safePhone,
-    "'" + nowStr,
-    safeMetodo
-  ];
-  
-  sheetAsist.appendRow(newRow);
-  const newRowIndex = sheetAsist.getLastRow();
-  
-  // Formatear texto en DNI, teléfono y fecha_hora para evitar #ERROR! y fechas crudas
-  sheetAsist.getRange(newRowIndex, COL_AS.DNI + 1).setNumberFormat('@');
-  sheetAsist.getRange(newRowIndex, COL_AS.TELEFONO + 1).setNumberFormat('@');
-  sheetAsist.getRange(newRowIndex, COL_AS.FECHA_HORA + 1).setNumberFormat('@');
-  
-  return jsonResponse({
-    success: true,
-    message: `¡Asistencia registrada con éxito! Bienvenido(a) ${militante.nombres}`,
-    data: {
-      id_asistencia: idAsistencia,
-      id_evento: eventoEncontrado.id_evento,
-      titulo_evento: eventoEncontrado.titulo,
-      dni: cleanDni,
-      nombres: militante.nombres,
-      apellidos: militante.apellidos,
-      base: militante.base,
-      fecha_hora: nowStr,
-      metodo: safeMetodo
+    
+    // 3. Verificar si ya marcó asistencia en este evento (atómico con Lock)
+    const sheetAsist = getSheet(SHEET_ASISTENCIA);
+    if (!sheetAsist) return jsonResponse({ success: false, error: 'No se encontró la pestaña Asistencia' });
+    
+    const dataAs = sheetAsist.getDataRange().getValues();
+    for (let i = 1; i < dataAs.length; i++) {
+      const row = dataAs[i];
+      const evId = String(row[COL_AS.ID_EVENTO] || '').trim();
+      const rowDni = String(row[COL_AS.DNI] || '').replace(/\D/g, '').trim();
+      
+      if (evId === String(id_evento).trim() && rowDni === cleanDni) {
+        const horaPrevia = String(row[COL_AS.FECHA_HORA] || '').trim();
+        return jsonResponse({
+          success: false,
+          alreadyMarked: true,
+          message: `La asistencia de ${militante.nombres} ya fue registrada previamente a las ${horaPrevia}.`,
+          data: {
+            dni: cleanDni,
+            nombres: militante.nombres,
+            apellidos: militante.apellidos,
+            fecha_hora: horaPrevia
+          }
+        });
+      }
     }
-  });
+    
+    // 4. Registrar Asistencia
+    const idAsistencia = 'ASIST-' + new Date().getTime().toString(36).toUpperCase();
+    const nowStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone() || 'America/Lima', 'yyyy-MM-dd HH:mm:ss');
+    const safeMetodo = metodo || 'manual';
+    
+    const safePhone = militante.id_whatsapp.startsWith('+') ? "'" + militante.id_whatsapp : militante.id_whatsapp;
+    
+    const newRow = [
+      idAsistencia,
+      eventoEncontrado.id_evento,
+      eventoEncontrado.titulo,
+      "'" + cleanDni,
+      militante.nombres,
+      militante.apellidos,
+      militante.base,
+      safePhone,
+      "'" + nowStr,
+      safeMetodo
+    ];
+    
+    sheetAsist.appendRow(newRow);
+    const newRowIndex = sheetAsist.getLastRow();
+    
+    // Formatear texto en DNI, teléfono y fecha_hora para evitar #ERROR! y fechas crudas
+    sheetAsist.getRange(newRowIndex, COL_AS.DNI + 1).setNumberFormat('@');
+    sheetAsist.getRange(newRowIndex, COL_AS.TELEFONO + 1).setNumberFormat('@');
+    sheetAsist.getRange(newRowIndex, COL_AS.FECHA_HORA + 1).setNumberFormat('@');
+    
+    return jsonResponse({
+      success: true,
+      message: `¡Asistencia registrada con éxito! Bienvenido(a) ${militante.nombres}`,
+      data: {
+        id_asistencia: idAsistencia,
+        id_evento: eventoEncontrado.id_evento,
+        titulo_evento: eventoEncontrado.titulo,
+        dni: cleanDni,
+        nombres: militante.nombres,
+        apellidos: militante.apellidos,
+        base: militante.base,
+        fecha_hora: nowStr,
+        metodo: safeMetodo
+      }
+    });
+  } catch(err) {
+    return jsonResponse({ success: false, error: 'Error al registrar asistencia: ' + err.toString() });
+  } finally {
+    try {
+      lock.releaseLock();
+    } catch(e) {}
+  }
 }

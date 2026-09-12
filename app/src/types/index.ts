@@ -9,7 +9,7 @@ export interface Militante {
   apellidos: string;
   dni: string;
   base: string;
-  estado_registro: 'pendiente' | 'completado' | 'en_revision' | 'rechazado';
+  estado_registro: 'pendiente' | 'completado' | 'en_revision' | 'rechazado' | 'inactivo';
   canal_registro: string;
 }
 
@@ -19,12 +19,18 @@ export interface Usuario {
   usuario: string;
   contrasena?: string; // Solo para autenticación, no se expone en listados
   rol: 'admin' | 'asistente';
+  nombres?: string;
+  apellidos?: string;
+  cargo?: string;
 }
 
 export interface Session {
   userId: string;
   username: string;
   role: 'admin' | 'asistente';
+  nombres?: string;
+  apellidos?: string;
+  cargo?: string;
 }
 
 export interface ApiResponse<T = unknown> {
@@ -43,12 +49,13 @@ export interface StatsData {
   pendientes: number;
   en_revision: number;
   rechazados?: number;
+  inactivos?: number;
 }
 
 export interface VerifyPhoneResult {
   success: boolean;
   found: boolean;
-  status: 'no_existe' | 'pendiente' | 'completado' | 'en_revision' | 'rechazado';
+  status: 'no_existe' | 'pendiente' | 'completado' | 'en_revision' | 'rechazado' | 'inactivo';
   data?: Militante;
   error?: string;
 }

@@ -1,5 +1,5 @@
 interface BadgeProps {
-  variant?: 'success' | 'warning' | 'danger' | 'info' | 'default' | 'gold' | 'brand';
+  variant?: 'success' | 'warning' | 'danger' | 'info' | 'default' | 'gold' | 'brand' | 'inactivo';
   children: React.ReactNode;
   dot?: boolean;
 }
@@ -12,6 +12,7 @@ export default function Badge({ variant = 'default', children, dot = false }: Ba
     info: 'bg-primary-500/20 text-primary-200 border-primary-400/30',
     brand: 'bg-primary-900/60 text-primary-100 border-primary-400/50 shadow-sm shadow-primary-950/40',
     gold: 'bg-accent-500/20 text-accent-300 border-accent-400/40 font-bold',
+    inactivo: 'bg-slate-800/80 text-slate-400 border-slate-700/60',
     default: 'bg-surface-800/80 text-primary-200 border-primary-200/20',
   };
 
@@ -22,6 +23,7 @@ export default function Badge({ variant = 'default', children, dot = false }: Ba
     info: 'bg-primary-300',
     brand: 'bg-primary-400',
     gold: 'bg-accent-400',
+    inactivo: 'bg-slate-400',
     default: 'bg-primary-300',
   };
 

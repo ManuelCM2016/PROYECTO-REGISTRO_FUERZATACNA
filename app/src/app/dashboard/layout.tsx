@@ -2,6 +2,7 @@
 
 import { useState, useEffect, ReactNode } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
+import { useToast } from '@/components/ui/Toast';
 import type { Session } from '@/types';
 
 interface DashboardLayoutProps {
@@ -9,6 +10,7 @@ interface DashboardLayoutProps {
 }
 
 export default function DashboardLayout({ children }: DashboardLayoutProps) {
+  const { addToast } = useToast();
   const router = useRouter();
   const pathname = usePathname();
 
@@ -19,10 +21,13 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
   const [currentStatusParam, setCurrentStatusParam] = useState<string | null>(null);
 
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const params = new URLSearchParams(window.location.search);
-      setCurrentStatusParam(params.get('estado'));
-    }
+    const timer = setTimeout(() => {
+      if (typeof window !== 'undefined') {
+        const params = new URLSearchParams(window.location.search);
+        setCurrentStatusParam(params.get('estado'));
+      }
+    }, 0);
+    return () => clearTimeout(timer);
   }, [pathname]);
 
   useEffect(() => {
@@ -38,8 +43,19 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
     try {
       const res = await fetch('/api/auth/me');
       const data = await res.json();
-      if (data.success) {
+      if (data.success && data.data) {
         setSession(data.data);
+
+        // Bienvenida rápida al ingresar al panel
+        if (typeof window !== 'undefined') {
+          const welcomedKey = `ft_welcomed_${data.data.userId || data.data.username}`;
+          if (!sessionStorage.getItem(welcomedKey)) {
+            sessionStorage.setItem(welcomedKey, '1');
+            const fullName = [data.data.nombres, data.data.apellidos].filter(Boolean).join(' ') || data.data.username;
+            const cargoText = data.data.cargo ? ` (${data.data.cargo})` : '';
+            addToast('info', `👋 ¡Bienvenido(a) a Fuerza Tacna, ${fullName}!${cargoText}`);
+          }
+        }
       } else {
         router.push('/login');
       }
@@ -88,6 +104,18 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
   const isMilitantesActive = pathname === '/dashboard/militantes' && currentStatusParam !== 'en_revision';
 
   const navItems = [
+    {
+      label: '📊 Estadísticas y Ranking',
+      href: '/dashboard/estadisticas',
+      isActive: pathname === '/dashboard/estadisticas' || pathname === '/dashboard',
+      icon: (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+        </svg>
+      ),
+      roles: ['admin', 'asistente'],
+      badge: null,
+    },
     {
       label: 'Militantes',
       href: '/dashboard/militantes',
@@ -211,22 +239,54 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
           })}
         </nav>
 
-        {/* User info */}
-        <div className="p-4 border-t border-primary-900/40">
-          <div className="flex items-center gap-3 mb-3">
-            <div className="w-9 h-9 rounded-full bg-gradient-to-br from-primary-600 to-primary-800 border border-accent-400/40 flex items-center justify-center text-accent-300 text-sm font-black shadow-sm">
-              {session.username.charAt(0).toUpperCase()}
+        {/* User info completo */}
+        <div className="p-4 border-t border-primary-900/40 bg-surface-900/40">
+          <div className="flex items-start gap-3 mb-3">
+            {/* Avatar con iniciales */}
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-accent-500 to-accent-600 border border-accent-300/50 flex items-center justify-center text-surface-950 font-black text-sm shadow-md shadow-accent-500/20 shrink-0 mt-0.5">
+              {(() => {
+                const n = session.nombres?.trim() || '';
+                const a = session.apellidos?.trim() || '';
+                if (n && a) return `${n.charAt(0)}${a.charAt(0)}`.toUpperCase();
+                if (n) return n.slice(0, 2).toUpperCase();
+                return session.username.slice(0, 2).toUpperCase();
+              })()}
             </div>
+
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold text-[#f8f9f9] truncate">{session.username}</p>
-              <p className="text-xs text-accent-400 font-bold capitalize">{session.role}</p>
+              {/* Nombres y Apellidos */}
+              <p
+                className="text-sm font-black text-[#f8f9f9] leading-tight truncate"
+                title={`${session.nombres || ''} ${session.apellidos || ''}`.trim() || session.username}
+              >
+                {(`${session.nombres || ''} ${session.apellidos || ''}`.trim()) || session.username}
+              </p>
+
+              {/* Cargo en Fuerza Tacna */}
+              {session.cargo && (
+                <div className="mt-1">
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-black bg-accent-500/20 text-accent-300 border border-accent-400/40 shadow-sm leading-none">
+                    🏛️ {session.cargo}
+                  </span>
+                </div>
+              )}
+
+              {/* DNI / Usuario y Rol */}
+              <p className="text-[11px] text-primary-200/70 font-mono mt-1 flex items-center gap-1.5 truncate">
+                <span>DNI: {session.username}</span>
+                <span className="text-primary-400/40">•</span>
+                <span className="text-accent-400 font-bold capitalize">
+                  {session.role === 'admin' ? 'Administrador' : 'Asistente'}
+                </span>
+              </p>
             </div>
           </div>
+
           <button
             onClick={handleLogout}
-            className="w-full flex items-center gap-2 px-4 py-2 rounded-xl text-sm text-primary-200/70 hover:text-red-400 hover:bg-red-500/10 transition-all cursor-pointer"
+            className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold text-primary-200/80 hover:text-red-300 hover:bg-red-500/15 border border-transparent hover:border-red-500/30 transition-all cursor-pointer"
           >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
             </svg>
             Cerrar Sesión

@@ -3,7 +3,7 @@
 import { ButtonHTMLAttributes, ReactNode } from 'react';
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: 'primary' | 'secondary' | 'danger' | 'ghost' | 'accent';
+  variant?: 'primary' | 'secondary' | 'danger' | 'ghost' | 'accent' | 'outline';
   size?: 'sm' | 'md' | 'lg';
   loading?: boolean;
   icon?: ReactNode;
@@ -32,6 +32,8 @@ export default function Button({
       'bg-gradient-to-r from-red-600 to-red-500 hover:from-red-500 hover:to-red-400 text-white focus:ring-red-500 shadow-lg shadow-red-500/20',
     ghost:
       'bg-transparent hover:bg-white/5 text-slate-300 hover:text-[#f8f9f9] focus:ring-accent-500/30',
+    outline:
+      'bg-transparent hover:bg-white/5 text-slate-300 hover:text-[#f8f9f9] border border-white/20 hover:border-white/40 focus:ring-accent-500/30',
     accent:
       'bg-gradient-to-r from-accent-500 via-accent-400 to-accent-500 hover:from-accent-400 hover:to-accent-300 text-surface-950 font-bold focus:ring-accent-500 shadow-lg shadow-accent-500/25',
   };

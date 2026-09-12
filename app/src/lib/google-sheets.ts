@@ -151,6 +151,16 @@ export async function addMilitante(data: {
   });
 }
 
+export async function deleteMilitante(data: {
+  rowIndex?: number;
+  telefono?: string;
+}): Promise<ApiResponse> {
+  return appsScriptPost<ApiResponse>({
+    action: 'deleteMilitante',
+    ...data,
+  });
+}
+
 // ============ USUARIOS ============
 
 export async function getUsuarios(): Promise<ApiResponse<Usuario[]>> {
@@ -165,6 +175,9 @@ export async function addUsuario(data: {
   usuario: string;
   contrasena: string;
   rol: string;
+  nombres?: string;
+  apellidos?: string;
+  cargo?: string;
 }): Promise<ApiResponse> {
   return appsScriptPost<ApiResponse>({
     action: 'addUsuario',

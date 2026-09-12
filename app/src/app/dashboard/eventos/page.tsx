@@ -65,6 +65,13 @@ export default function EventosPage() {
   } | null>(null);
   const [scanningLocked, setScanningLocked] = useState(false);
   const html5QrCodeRef = useRef<any>(null);
+  const isScanningLockedRef = useRef(false);
+  const lastScannedTimeRef = useRef<{ [dni: string]: number }>({});
+  const selectedEventRef = useRef<Evento | null>(selectedEvent);
+
+  useEffect(() => {
+    selectedEventRef.current = selectedEvent;
+  }, [selectedEvent]);
 
   // Modalidad 2: Búsqueda Manual
   const [manualDni, setManualDni] = useState('');
@@ -250,7 +257,8 @@ export default function EventosPage() {
   // Procesa el texto detectado por el escáner QR
   const handleQrDecoded = useCallback(
     async (decodedText: string) => {
-      if (scanningLocked || !selectedEvent) return;
+      const currentEvent = selectedEventRef.current;
+      if (isScanningLockedRef.current || !currentEvent) return;
 
       // Extraer DNI de varios formatos posibles:
       // Formato 1: URL /validar/12345678
@@ -284,11 +292,28 @@ export default function EventosPage() {
         return;
       }
 
-      // Bloquear escaneo momentáneamente (2.5 segundos) para no disparar lecturas múltiples
+      // Verificación de duplicidad síncrona en memoria (Anti-rebote estricto de 6 segundos)
+      const now = Date.now();
+      const lastScan = lastScannedTimeRef.current[extractedDni] || 0;
+      if (now - lastScan < 6000) {
+        // Ignorar de inmediato: ya fue procesado o está en proceso
+        return;
+      }
+
+      // BLOQUEO INMEDIATO SÍNCRONO (impide que frames subsiguientes de la cámara ejecuten otra llamada)
+      isScanningLockedRef.current = true;
+      lastScannedTimeRef.current[extractedDni] = now;
       setScanningLocked(true);
 
+      // Pausar procesamiento de frames de la cámara mientras se registra
+      if (html5QrCodeRef.current) {
+        try {
+          html5QrCodeRef.current.pause(true);
+        } catch {}
+      }
+
       try {
-        const res = await fetch(`/api/eventos/${selectedEvent.id_evento}/asistencia`, {
+        const res = await fetch(`/api/eventos/${currentEvent.id_evento}/asistencia`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -312,11 +337,11 @@ export default function EventosPage() {
             },
           });
           // Actualizar lista en vivo
-          loadAsistencia(selectedEvent.id_evento);
+          loadAsistencia(currentEvent.id_evento);
         } else if (result.alreadyMarked) {
           setLastScannedResult({
             status: 'already',
-            message: result.message || 'Esta persona ya había marcado asistencia.',
+            message: result.message || 'Esta persona ya había marcado asistencia en este evento.',
             militante: result.data,
           });
         } else if (result.notFound) {
@@ -337,11 +362,18 @@ export default function EventosPage() {
         });
       } finally {
         setTimeout(() => {
+          isScanningLockedRef.current = false;
           setScanningLocked(false);
+          // Reanudar cámara
+          if (html5QrCodeRef.current) {
+            try {
+              html5QrCodeRef.current.resume();
+            } catch {}
+          }
         }, 2500);
       }
     },
-    [scanningLocked, selectedEvent]
+    []
   );
 
   // ---- CONTROLADOR DE ASISTENCIA: BÚSQUEDA MANUAL (MODALIDAD 2) ----

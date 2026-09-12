@@ -22,10 +22,6 @@ export default function ValidarDniPage({ params }: { params: Promise<{ dni: stri
   const [data, setData] = useState<MilitanteVerification | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetchVerification();
-  }, [rawDni]);
-
   const fetchVerification = async () => {
     setLoading(true);
     setError(null);
@@ -45,6 +41,10 @@ export default function ValidarDniPage({ params }: { params: Promise<{ dni: stri
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    fetchVerification();
+  }, [rawDni]);
 
   const isApproved = data?.estado_registro === 'completado';
   const isInReview = data?.estado_registro === 'en_revision';

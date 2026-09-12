@@ -47,6 +47,9 @@ export async function POST(request: NextRequest) {
       userId: usuario.id,
       username: usuario.usuario,
       role: usuario.rol as 'admin' | 'asistente',
+      nombres: usuario.nombres || '',
+      apellidos: usuario.apellidos || '',
+      cargo: usuario.cargo || '',
     };
 
     await setSessionCookie(session);
@@ -56,6 +59,9 @@ export async function POST(request: NextRequest) {
       data: {
         username: session.username,
         role: session.role,
+        nombres: session.nombres,
+        apellidos: session.apellidos,
+        cargo: session.cargo,
       },
     });
   } catch (error) {

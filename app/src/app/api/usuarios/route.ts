@@ -34,11 +34,11 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { usuario, password, rol } = body;
+    const { usuario, password, rol, nombres, apellidos, cargo } = body;
 
     if (!usuario || !password || !rol) {
       return NextResponse.json(
-        { success: false, error: 'Todos los campos son requeridos' },
+        { success: false, error: 'Usuario, contraseña y rol son requeridos' },
         { status: 400 }
       );
     }
@@ -57,6 +57,9 @@ export async function POST(request: NextRequest) {
       usuario,
       contrasena: hashedPassword,
       rol,
+      nombres: nombres?.trim() || '',
+      apellidos: apellidos?.trim() || '',
+      cargo: cargo?.trim() || 'Militante',
     });
 
     return NextResponse.json(result);
