@@ -1,0 +1,244 @@
+@import "tailwindcss";
+
+/* ============================================
+   Sistema de diseño — Fuerza Tacna
+   Colores oficiales:
+   Primarios: #842f50 (Vino/Granate) | #f1b527 (Dorado/Oro)
+   Secundarios: #a87a8e | #745725 | #f8f9f9 | #0e0401 | #e4d2dc
+   ============================================ */
+
+@theme {
+  /* Primario: Vino / Granate Institucional (#842f50) */
+  --color-primary-50: #fdf7f9;
+  --color-primary-100: #faeef3;
+  --color-primary-200: #e4d2dc;
+  --color-primary-300: #cf9fb3;
+  --color-primary-400: #a87a8e;
+  --color-primary-500: #933c5b;
+  --color-primary-600: #842f50;
+  --color-primary-700: #6e2441;
+  --color-primary-800: #571b33;
+  --color-primary-900: #421125;
+  --color-primary-950: #250713;
+
+  /* Accent: Dorado / Oro Fuerza Tacna (#f1b527) */
+  --color-accent-300: #f9d877;
+  --color-accent-400: #f5c654;
+  --color-accent-500: #f1b527;
+  --color-accent-600: #d49a15;
+  --color-accent-700: #745725;
+  --color-accent-800: #553e18;
+
+  /* Superficies: Ébano profundo con matiz cálido vino (#0e0401) */
+  --color-surface-950: #060201;
+  --color-surface-900: #0e0401;
+  --color-surface-850: #17070d;
+  --color-surface-800: #1f0c15;
+  --color-surface-700: #331523;
+  --color-surface-600: #4a1f33;
+
+  /* Colores oficiales directos */
+  --color-ft-vino: #842f50;
+  --color-ft-dorado: #f1b527;
+  --color-ft-malva: #a87a8e;
+  --color-ft-bronce: #745725;
+  --color-ft-blanco: #f8f9f9;
+  --color-ft-ebano: #0e0401;
+  --color-ft-lila: #e4d2dc;
+
+  /* Semánticos armonizados */
+  --color-success: #10b981;
+  --color-warning: #f1b527;
+  --color-danger: #ef4444;
+  --color-info: #842f50;
+}
+
+/* ---- Base ---- */
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background: radial-gradient(circle at 50% -10%, #290a18 0%, #14060c 45%, #0e0401 100%);
+  color: #f8f9f9;
+  min-height: 100vh;
+}
+
+/* ---- Glassmorphism ---- */
+.glass {
+  background: rgba(31, 12, 21, 0.65);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(228, 210, 220, 0.12);
+}
+
+.glass-light {
+  background: rgba(248, 249, 249, 0.04);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(241, 181, 39, 0.18);
+}
+
+.glass-card {
+  background: linear-gradient(135deg, rgba(31, 12, 21, 0.75) 0%, rgba(14, 4, 1, 0.85) 100%);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(168, 122, 142, 0.2);
+}
+
+/* ---- Gradient text ---- */
+.gradient-text {
+  background: linear-gradient(135deg, #f1b527 0%, #f8f9f9 50%, #e4d2dc 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.gradient-gold {
+  background: linear-gradient(135deg, #f1b527 0%, #fef3c7 60%, #d49a15 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.gradient-vino {
+  background: linear-gradient(135deg, #e4d2dc 0%, #a87a8e 50%, #842f50 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* ---- Animated gradient bg ---- */
+.gradient-animated {
+  background: linear-gradient(-45deg, #571b33, #842f50, #1f0c15, #0e0401);
+  background-size: 400% 400%;
+  animation: gradientShift 10s ease infinite;
+}
+
+@keyframes gradientShift {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+/* ---- Glow effects ---- */
+.glow-brand {
+  box-shadow: 0 0 25px rgba(132, 47, 80, 0.35), 0 0 60px rgba(132, 47, 80, 0.12);
+}
+
+.glow-gold, .glow-accent {
+  box-shadow: 0 0 25px rgba(241, 181, 39, 0.3), 0 0 60px rgba(241, 181, 39, 0.1);
+}
+
+.glow-blue {
+  box-shadow: 0 0 20px rgba(132, 47, 80, 0.25), 0 0 60px rgba(132, 47, 80, 0.08);
+}
+
+/* ---- Skeleton animation ---- */
+.skeleton-pulse {
+  animation: skeletonPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes skeletonPulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 0.7; }
+}
+
+/* ---- Toast animation ---- */
+.toast-enter {
+  animation: toastSlideIn 0.3s ease-out forwards;
+}
+
+.toast-exit {
+  animation: toastSlideOut 0.3s ease-in forwards;
+}
+
+@keyframes toastSlideIn {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes toastSlideOut {
+  from { transform: translateX(0); opacity: 1; }
+  to { transform: translateX(100%); opacity: 0; }
+}
+
+/* ---- Modal animation ---- */
+.modal-overlay-enter {
+  animation: fadeIn 0.2s ease-out forwards;
+}
+
+.modal-content-enter {
+  animation: scaleIn 0.25s ease-out forwards;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.95) translateY(10px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+/* ---- Pulse dot ---- */
+.pulse-dot {
+  animation: pulseDot 2s ease-in-out infinite;
+}
+
+@keyframes pulseDot {
+  0%, 100% { transform: scale(1); opacity: 0.7; }
+  50% { transform: scale(1.3); opacity: 1; }
+}
+
+/* ---- Custom scrollbar ---- */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(14, 4, 1, 0.6);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(132, 47, 80, 0.4);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(241, 181, 39, 0.6);
+}
+
+/* ---- Input autofill fix ---- */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus {
+  -webkit-text-fill-color: #f8f9f9;
+  -webkit-box-shadow: 0 0 0px 1000px #17070d inset;
+  transition: background-color 5000s ease-in-out 0s;
+}
+
+/* ---- Step indicator ---- */
+.step-active {
+  background: linear-gradient(135deg, #842f50, #f1b527);
+  box-shadow: 0 0 16px rgba(241, 181, 39, 0.5);
+  color: #f8f9f9;
+}
+
+.step-completed {
+  background: linear-gradient(135deg, #10b981, #059669);
+  box-shadow: 0 0 12px rgba(16, 185, 129, 0.4);
+}
+
+/* ---- Float animation for success ---- */
+.float-animation {
+  animation: float 3s ease-in-out infinite;
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
