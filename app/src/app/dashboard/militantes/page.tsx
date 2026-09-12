@@ -90,39 +90,70 @@ function MilitantesContent() {
       if (searchQuery.trim()) {
         handleSearch(searchQuery);
       } else {
-        loadMilitantes();
+        loadData();
       }
     }, 400);
     return () => clearTimeout(timeout);
   }, [searchQuery]);
 
-  const loadData = async () => {
-    setLoading(true);
-    await Promise.all([loadMilitantes(), loadStats()]);
-    setLoading(false);
-  };
+  const [refreshing, setRefreshing] = useState(false);
 
-  const loadMilitantes = async () => {
-    try {
-      const res = await fetch('/api/militantes');
-      const data = await res.json();
-      if (data.success) {
-        setMilitantes(data.data || []);
-      }
-    } catch {
-      addToast('error', 'Error al cargar militantes');
+  const loadData = async (forceFresh = false) => {
+    // 1. Cargar instantáneamente de sessionStorage si existe copia previa
+    if (!forceFresh && typeof window !== 'undefined') {
+      try {
+        const cachedStr = sessionStorage.getItem('ft_cache_militantes');
+        if (cachedStr) {
+          const cached = JSON.parse(cachedStr);
+          if (cached && Array.isArray(cached.data) && cached.data.length > 0) {
+            setMilitantes(cached.data);
+            if (cached.stats) {
+              setStats(cached.stats);
+              sessionStorage.setItem('ft_in_review_count', String(cached.stats.en_revision || 0));
+              window.dispatchEvent(new CustomEvent('ft_stats_updated', { detail: cached.stats }));
+            }
+            setLoading(false); // Carga instantánea (0ms) sin esqueletos
+          }
+        }
+      } catch {}
     }
-  };
 
-  const loadStats = async () => {
+    if (forceFresh) {
+      setRefreshing(true);
+    }
+
+    // 2. Consulta unificada (datos + estadísticas en un solo viaje HTTP)
     try {
-      const res = await fetch('/api/militantes?stats=true');
+      const url = forceFresh ? '/api/militantes?fresh=true' : '/api/militantes';
+      const res = await fetch(url);
       const data = await res.json();
-      if (data.success && data.data) {
-        setStats(data.data);
+      if (data.success && Array.isArray(data.data)) {
+        setMilitantes(data.data);
+        if (data.stats) {
+          setStats(data.stats);
+          if (typeof window !== 'undefined') {
+            sessionStorage.setItem('ft_in_review_count', String(data.stats.en_revision || 0));
+            window.dispatchEvent(new CustomEvent('ft_stats_updated', { detail: data.stats }));
+          }
+        }
+        if (typeof window !== 'undefined') {
+          sessionStorage.setItem(
+            'ft_cache_militantes',
+            JSON.stringify({
+              data: data.data,
+              stats: data.stats,
+              updatedAt: Date.now(),
+            })
+          );
+        }
       }
     } catch {
-      console.error('Error loading stats');
+      if (!militantes.length) {
+        addToast('error', 'Error al cargar militantes');
+      }
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
     }
   };
 
@@ -172,7 +203,7 @@ function MilitantesContent() {
       if (data.success) {
         addToast('success', `Militante ${m.nombres} aprobado exitosamente`);
         setDetailModalOpen(false);
-        await loadData();
+        await loadData(true);
       } else {
         addToast('error', data.error || 'Error al aprobar militante');
       }
@@ -204,7 +235,7 @@ function MilitantesContent() {
       if (data.success) {
         addToast('info', `Solicitud de ${m.nombres || m.id_whatsapp} rechazada`);
         setDetailModalOpen(false);
-        await loadData();
+        await loadData(true);
       } else {
         addToast('error', data.error || 'Error al rechazar solicitud');
       }
@@ -248,7 +279,7 @@ function MilitantesContent() {
         if (deleteModalOpen) {
           setDeleteModalOpen(false);
         }
-        await loadData();
+        await loadData(true);
       } else {
         addToast('error', data.error || 'Error al cambiar estado del militante');
       }
@@ -275,7 +306,7 @@ function MilitantesContent() {
         addToast('success', `Registro de ${m.nombres || m.id_whatsapp} eliminado definitivamente de Google Sheets`);
         setDeleteModalOpen(false);
         setDetailModalOpen(false);
-        await loadData();
+        await loadData(true);
       } else {
         addToast('error', data.error || 'Error al eliminar registro');
       }
@@ -408,7 +439,7 @@ function MilitantesContent() {
         if (data.success) {
           addToast('success', 'Militante registrado correctamente');
           setModalOpen(false);
-          loadData();
+          await loadData(true);
         } else {
           addToast('error', data.error || 'Error al registrar');
         }
@@ -431,7 +462,7 @@ function MilitantesContent() {
         if (data.success) {
           addToast('success', 'Militante actualizado correctamente');
           setModalOpen(false);
-          loadData();
+          await loadData(true);
         } else {
           addToast('error', data.error || 'Error al actualizar');
         }
@@ -490,6 +521,19 @@ function MilitantesContent() {
           </div>
         </div>
         <div className="flex gap-2">
+          <Button
+            variant="secondary"
+            onClick={() => loadData(true)}
+            size="sm"
+            disabled={refreshing}
+            icon={
+              <svg className={`w-4 h-4 text-accent-400 ${refreshing ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+            }
+          >
+            {refreshing ? 'Actualizando...' : 'Actualizar'}
+          </Button>
           <Button
             variant="secondary"
             onClick={copyRegistroLink}
@@ -712,9 +756,15 @@ function MilitantesContent() {
           </div>
           <Button
             variant="secondary"
-            onClick={loadData}
+            onClick={() => loadData(true)}
+            loading={refreshing}
             icon={
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg
+                className={`w-4 h-4 ${refreshing ? 'animate-spin text-accent-400' : 'text-primary-300'}`}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
               </svg>
             }

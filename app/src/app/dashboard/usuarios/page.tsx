@@ -23,6 +23,7 @@ export default function UsuariosPage() {
 
   const [usuarios, setUsuarios] = useState<Usuario[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
   // Form states
   const [showForm, setShowForm] = useState(false);
@@ -40,23 +41,51 @@ export default function UsuariosPage() {
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    loadUsuarios();
+    // 1. Cargar instantáneamente de sessionStorage si existe
+    if (typeof window !== 'undefined') {
+      try {
+        const cachedStr = sessionStorage.getItem('ft_cache_usuarios');
+        if (cachedStr) {
+          const cached = JSON.parse(cachedStr);
+          if (Array.isArray(cached) && cached.length > 0) {
+            setUsuarios(cached);
+            setLoading(false);
+          }
+        }
+      } catch {}
+    }
+    loadUsuarios(false);
   }, []);
 
-  const loadUsuarios = async () => {
-    setLoading(true);
+  const loadUsuarios = async (forceFresh = false) => {
+    if (forceFresh) {
+      setRefreshing(true);
+    } else if (usuarios.length === 0 && !sessionStorage.getItem('ft_cache_usuarios')) {
+      setLoading(true);
+    }
+
     try {
-      const res = await fetch('/api/usuarios');
+      const url = forceFresh ? '/api/usuarios?fresh=true' : '/api/usuarios';
+      const res = await fetch(url);
       const data = await res.json();
       if (data.success) {
         setUsuarios(data.data || []);
+        if (typeof window !== 'undefined') {
+          sessionStorage.setItem('ft_cache_usuarios', JSON.stringify(data.data || []));
+        }
+        if (forceFresh) {
+          addToast('success', 'Lista de usuarios actualizada');
+        }
       } else if (data.error === 'Acceso denegado') {
         addToast('error', 'No tienes permisos para ver esta página');
       }
     } catch {
-      addToast('error', 'Error al cargar usuarios');
+      if (usuarios.length === 0) {
+        addToast('error', 'Error al cargar usuarios');
+      }
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
@@ -113,7 +142,7 @@ export default function UsuariosPage() {
           rol: 'asistente',
         });
         setFormErrors({});
-        loadUsuarios();
+        await loadUsuarios(true);
       } else {
         addToast('error', data.error || 'Error al crear usuario');
       }
@@ -141,24 +170,39 @@ export default function UsuariosPage() {
             </p>
           </div>
         </div>
-        <Button
-          onClick={() => setShowForm(!showForm)}
-          variant="accent"
-          size="sm"
-          icon={
-            showForm ? (
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+        <div className="flex gap-2">
+          <Button
+            onClick={() => loadUsuarios(true)}
+            variant="secondary"
+            size="sm"
+            disabled={refreshing}
+            icon={
+              <svg className={`w-4 h-4 text-accent-400 ${refreshing ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
               </svg>
-            ) : (
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-              </svg>
-            )
-          }
-        >
-          {showForm ? 'Cancelar' : 'Nuevo Usuario'}
-        </Button>
+            }
+          >
+            {refreshing ? 'Actualizando...' : 'Actualizar'}
+          </Button>
+          <Button
+            onClick={() => setShowForm(!showForm)}
+            variant="accent"
+            size="sm"
+            icon={
+              showForm ? (
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              ) : (
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+              )
+            }
+          >
+            {showForm ? 'Cancelar' : 'Nuevo Usuario'}
+          </Button>
+        </div>
       </div>
 
       {/* Create Form */}

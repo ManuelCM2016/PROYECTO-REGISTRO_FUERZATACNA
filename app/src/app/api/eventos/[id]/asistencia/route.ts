@@ -3,7 +3,7 @@ import { getSession } from '@/lib/auth';
 import { getAsistencia, marcarAsistencia } from '@/lib/google-sheets';
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
@@ -16,8 +16,15 @@ export async function GET(
     }
 
     const { id } = await params;
-    const result = await getAsistencia(id);
-    return NextResponse.json(result);
+    const { searchParams } = new URL(request.url);
+    const forceFresh = searchParams.get('fresh') === 'true';
+
+    const result = await getAsistencia(id, forceFresh);
+    return NextResponse.json(result, {
+      headers: {
+        'Cache-Control': 'public, s-maxage=10, stale-while-revalidate=20',
+      },
+    });
   } catch (error) {
     console.error('Error getting asistencia:', error);
     return NextResponse.json(

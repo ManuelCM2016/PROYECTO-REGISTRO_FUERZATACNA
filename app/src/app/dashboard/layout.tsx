@@ -17,7 +17,16 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [inReviewCount, setInReviewCount] = useState<number>(0);
+  const [inReviewCount, setInReviewCount] = useState<number>(() => {
+    if (typeof window !== 'undefined') {
+      const cached = sessionStorage.getItem('ft_in_review_count');
+      if (cached) {
+        const parsed = parseInt(cached, 10);
+        if (!isNaN(parsed)) return parsed;
+      }
+    }
+    return 0;
+  });
   const [currentStatusParam, setCurrentStatusParam] = useState<string | null>(null);
 
   useEffect(() => {
@@ -34,9 +43,22 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
     fetchSession();
     fetchStats();
 
+    // Escuchar actualizaciones instantáneas de estadísticas disparadas desde cualquier vista
+    const handleStatsUpdated = (e: Event) => {
+      const customEvent = e as CustomEvent;
+      if (customEvent.detail && typeof customEvent.detail.en_revision === 'number') {
+        setInReviewCount(customEvent.detail.en_revision);
+        sessionStorage.setItem('ft_in_review_count', String(customEvent.detail.en_revision));
+      }
+    };
+    window.addEventListener('ft_stats_updated', handleStatsUpdated);
+
     // Actualizar contador en segundo plano cada 30 segundos
     const interval = setInterval(fetchStats, 30000);
-    return () => clearInterval(interval);
+    return () => {
+      window.removeEventListener('ft_stats_updated', handleStatsUpdated);
+      clearInterval(interval);
+    };
   }, []);
 
   const fetchSession = async () => {
@@ -71,7 +93,11 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
       const res = await fetch('/api/militantes?stats=true');
       const data = await res.json();
       if (data.success && data.data) {
-        setInReviewCount(data.data.en_revision || 0);
+        const count = data.data.en_revision || 0;
+        setInReviewCount(count);
+        if (typeof window !== 'undefined') {
+          sessionStorage.setItem('ft_in_review_count', String(count));
+        }
       }
     } catch {
       // Ignorar errores de sondeo en segundo plano

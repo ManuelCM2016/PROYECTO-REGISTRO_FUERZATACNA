@@ -37,6 +37,7 @@ export default function EventosPage() {
   // Estados de Eventos
   const [eventos, setEventos] = useState<Evento[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [submittingEvent, setSubmittingEvent] = useState(false);
   const [newEventData, setNewEventData] = useState({
@@ -105,31 +106,83 @@ export default function EventosPage() {
     };
   }, [selectedEvent, activeTab, scannerActive]);
 
-  const loadEventos = async () => {
-    setLoading(true);
+  const loadEventos = async (forceFresh = false) => {
+    // 1. Carga instantánea desde sessionStorage si existe copia previa
+    if (!forceFresh && typeof window !== 'undefined') {
+      try {
+        const cachedStr = sessionStorage.getItem('ft_cache_eventos');
+        if (cachedStr) {
+          const cached = JSON.parse(cachedStr);
+          if (Array.isArray(cached) && cached.length > 0) {
+            setEventos(cached);
+            setLoading(false);
+          }
+        }
+      } catch {}
+    }
+
+    if (forceFresh) {
+      setRefreshing(true);
+    } else if (eventos.length === 0 && !sessionStorage.getItem('ft_cache_eventos')) {
+      setLoading(true);
+    }
+
     try {
-      const res = await fetch('/api/eventos');
+      const url = forceFresh ? '/api/eventos?fresh=true' : '/api/eventos';
+      const res = await fetch(url);
       const data = await res.json();
       if (data.success && data.data) {
         setEventos(data.data);
+        if (typeof window !== 'undefined') {
+          sessionStorage.setItem('ft_cache_eventos', JSON.stringify(data.data));
+        }
+        if (forceFresh) {
+          addToast('success', 'Lista de eventos actualizada');
+        }
       }
     } catch {
-      addToast('error', 'Error al cargar la lista de eventos');
+      if (eventos.length === 0) {
+        addToast('error', 'Error al cargar la lista de eventos');
+      }
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
-  const loadAsistencia = async (idEvento: string) => {
-    setLoadingAsistencia(true);
+  const loadAsistencia = async (idEvento: string, forceFresh = false) => {
+    // 1. Cargar instantáneamente de sessionStorage si existe
+    if (!forceFresh && typeof window !== 'undefined') {
+      try {
+        const cachedStr = sessionStorage.getItem(`ft_cache_asistencia_${idEvento}`);
+        if (cachedStr) {
+          const cached = JSON.parse(cachedStr);
+          if (Array.isArray(cached)) {
+            setAsistentes(cached);
+            setLoadingAsistencia(false);
+          }
+        }
+      } catch {}
+    }
+
+    if (!sessionStorage.getItem(`ft_cache_asistencia_${idEvento}`)) {
+      setLoadingAsistencia(true);
+    }
+
     try {
-      const res = await fetch(`/api/eventos/${idEvento}/asistencia`);
+      const url = forceFresh ? `/api/eventos/${idEvento}/asistencia?fresh=true` : `/api/eventos/${idEvento}/asistencia`;
+      const res = await fetch(url);
       const data = await res.json();
       if (data.success && data.data) {
         setAsistentes(data.data);
+        if (typeof window !== 'undefined') {
+          sessionStorage.setItem(`ft_cache_asistencia_${idEvento}`, JSON.stringify(data.data));
+        }
       }
     } catch {
-      addToast('error', 'Error al cargar la lista de asistencia');
+      if (asistentes.length === 0) {
+        addToast('error', 'Error al cargar la lista de asistencia');
+      }
     } finally {
       setLoadingAsistencia(false);
     }
@@ -161,7 +214,7 @@ export default function EventosPage() {
           hora: '18:00',
           lugar: '',
         });
-        await loadEventos();
+        await loadEventos(true);
       } else {
         addToast('error', data.error || 'Error al crear evento');
       }
@@ -188,7 +241,7 @@ export default function EventosPage() {
         if (selectedEvent?.id_evento === evento.id_evento) {
           setSelectedEvent({ ...selectedEvent, estado: newStatus });
         }
-        await loadEventos();
+        await loadEventos(true);
       }
     } catch {
       addToast('error', 'Error al actualizar estado');
@@ -336,8 +389,16 @@ export default function EventosPage() {
               base: result.data.base,
             },
           });
-          // Actualizar lista en vivo
-          loadAsistencia(currentEvent.id_evento);
+          // Actualizar lista en vivo y contadores optimistas
+          loadAsistencia(currentEvent.id_evento, true);
+          setSelectedEvent((prev) => (prev ? { ...prev, total_asistentes: (prev.total_asistentes || 0) + 1 } : null));
+          setEventos((prev) =>
+            prev.map((ev) =>
+              ev.id_evento === currentEvent.id_evento
+                ? { ...ev, total_asistentes: (ev.total_asistentes || 0) + 1 }
+                : ev
+            )
+          );
         } else if (result.alreadyMarked) {
           setLastScannedResult({
             status: 'already',
@@ -423,7 +484,15 @@ export default function EventosPage() {
         addToast('success', `¡Asistencia de ${manualMilitanteResult.nombres} registrada!`);
         setManualDni('');
         setManualMilitanteResult(null);
-        await loadAsistencia(selectedEvent.id_evento);
+        await loadAsistencia(selectedEvent.id_evento, true);
+        setSelectedEvent((prev) => (prev ? { ...prev, total_asistentes: (prev.total_asistentes || 0) + 1 } : null));
+        setEventos((prev) =>
+          prev.map((ev) =>
+            ev.id_evento === selectedEvent.id_evento
+              ? { ...ev, total_asistentes: (ev.total_asistentes || 0) + 1 }
+              : ev
+          )
+        );
       } else if (result.alreadyMarked) {
         addToast('warning', result.message || 'Ya había registrado asistencia');
       } else {
@@ -454,6 +523,18 @@ export default function EventosPage() {
               </p>
             </div>
             <div className="flex gap-2">
+              <Button
+                onClick={() => loadEventos(true)}
+                variant="secondary"
+                disabled={refreshing}
+                icon={
+                  <svg className={`w-4 h-4 text-accent-400 ${refreshing ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                }
+              >
+                {refreshing ? 'Actualizando...' : 'Actualizar'}
+              </Button>
               <Button
                 onClick={() => setCreateModalOpen(true)}
                 variant="primary"
@@ -628,6 +709,20 @@ export default function EventosPage() {
                 </span>
                 <span className="text-2xl font-black text-white font-mono">{asistentes.length}</span>
               </div>
+
+              <Button
+                onClick={() => loadAsistencia(selectedEvent.id_evento, true)}
+                variant="secondary"
+                size="sm"
+                disabled={loadingAsistencia}
+                icon={
+                  <svg className={`w-4 h-4 text-amber-400 ${loadingAsistencia ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                }
+              >
+                Actualizar
+              </Button>
 
               <Button
                 onClick={() => openPosterModal(selectedEvent)}

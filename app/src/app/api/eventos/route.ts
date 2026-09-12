@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth';
 import { getEventos, addEvento } from '@/lib/google-sheets';
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     const session = await getSession();
     if (!session) {
@@ -12,8 +12,15 @@ export async function GET() {
       );
     }
 
-    const result = await getEventos();
-    return NextResponse.json(result);
+    const { searchParams } = new URL(request.url);
+    const forceFresh = searchParams.get('fresh') === 'true';
+
+    const result = await getEventos(forceFresh);
+    return NextResponse.json(result, {
+      headers: {
+        'Cache-Control': 'public, s-maxage=15, stale-while-revalidate=30',
+      },
+    });
   } catch (error) {
     console.error('Error fetching eventos:', error);
     return NextResponse.json(

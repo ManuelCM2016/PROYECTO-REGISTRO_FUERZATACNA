@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSession, hashPassword } from '@/lib/auth';
 import { getUsuarios, addUsuario } from '@/lib/google-sheets';
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     const session = await getSession();
     if (!session || session.role !== 'admin') {
@@ -12,8 +12,15 @@ export async function GET() {
       );
     }
 
-    const result = await getUsuarios();
-    return NextResponse.json(result);
+    const { searchParams } = new URL(request.url);
+    const forceFresh = searchParams.get('fresh') === 'true';
+
+    const result = await getUsuarios(forceFresh);
+    return NextResponse.json(result, {
+      headers: {
+        'Cache-Control': 'public, s-maxage=30, stale-while-revalidate=60',
+      },
+    });
   } catch (error) {
     console.error('Error getting usuarios:', error);
     return NextResponse.json(

@@ -27,9 +27,47 @@ function checkResponseText(text: string): void {
   }
 }
 
-async function appsScriptGet<T>(action: string, params: Record<string, string> = {}): Promise<T> {
+// ============================================
+// Cache en Memoria para consultas de alta velocidad
+// ============================================
+interface CacheEntry<T> {
+  data: T;
+  expiresAt: number;
+}
+
+const memoryCache = new Map<string, CacheEntry<unknown>>();
+
+export function invalidateCache(actionKeys?: string[]): void {
+  if (!actionKeys || actionKeys.length === 0) {
+    memoryCache.clear();
+    return;
+  }
+  for (const key of memoryCache.keys()) {
+    if (actionKeys.some((action) => key.includes(action))) {
+      memoryCache.delete(key);
+    }
+  }
+}
+
+async function appsScriptGet<T>(
+  action: string,
+  params: Record<string, string> = {},
+  options: { ttlSeconds?: number; forceFresh?: boolean } = {}
+): Promise<T> {
   if (!APPS_SCRIPT_URL) {
     throw new Error('APPS_SCRIPT_URL no está configurada en .env.local');
+  }
+
+  const { ttlSeconds = 25, forceFresh = false } = options;
+  const cacheKey = `${action}:${JSON.stringify(params)}`;
+  const now = Date.now();
+
+  // 1. Revisar si tenemos respuesta fresca en memoria
+  if (!forceFresh && ttlSeconds > 0) {
+    const cached = memoryCache.get(cacheKey);
+    if (cached && cached.expiresAt > now) {
+      return cached.data as T;
+    }
   }
 
   const url = new URL(APPS_SCRIPT_URL);
@@ -48,7 +86,15 @@ async function appsScriptGet<T>(action: string, params: Record<string, string> =
   checkResponseText(text);
 
   try {
-    return JSON.parse(text) as T;
+    const data = JSON.parse(text) as T;
+    // Guardar en caché si la respuesta fue exitosa
+    if (ttlSeconds > 0 && data && typeof data === 'object' && (data as any).success !== false) {
+      memoryCache.set(cacheKey, {
+        data,
+        expiresAt: now + ttlSeconds * 1000,
+      });
+    }
+    return data;
   } catch {
     throw new Error(`Error al procesar respuesta de Google Apps Script: ${text.substring(0, 200)}`);
   }
@@ -57,6 +103,19 @@ async function appsScriptGet<T>(action: string, params: Record<string, string> =
 async function appsScriptPost<T>(payload: Record<string, unknown>): Promise<T> {
   if (!APPS_SCRIPT_URL) {
     throw new Error('APPS_SCRIPT_URL no está configurada en .env.local');
+  }
+
+  const action = String(payload.action || '');
+
+  // Invalidación inteligente antes/después de la mutación
+  if (action.includes('Militante')) {
+    invalidateCache(['getMilitantes', 'getStats', 'searchMilitantes', 'findByPhone', 'checkDni']);
+  } else if (action.includes('Evento')) {
+    invalidateCache(['getEventos', 'getEventoById', 'getAsistencia']);
+  } else if (action.includes('Asistencia')) {
+    invalidateCache(['getAsistencia', 'checkAsistencia', 'getEventos', 'getEventoById']);
+  } else if (action.includes('Usuario')) {
+    invalidateCache(['getUsuarios', 'findUsuario']);
   }
 
   const response = await fetch(APPS_SCRIPT_URL, {
@@ -72,7 +131,18 @@ async function appsScriptPost<T>(payload: Record<string, unknown>): Promise<T> {
   checkResponseText(text);
 
   try {
-    return JSON.parse(text) as T;
+    const result = JSON.parse(text) as T;
+    // Invalidación confirmada
+    if (action.includes('Militante')) {
+      invalidateCache(['getMilitantes', 'getStats', 'searchMilitantes', 'findByPhone', 'checkDni']);
+    } else if (action.includes('Evento')) {
+      invalidateCache(['getEventos', 'getEventoById', 'getAsistencia']);
+    } else if (action.includes('Asistencia')) {
+      invalidateCache(['getAsistencia', 'checkAsistencia', 'getEventos', 'getEventoById']);
+    } else if (action.includes('Usuario')) {
+      invalidateCache(['getUsuarios', 'findUsuario']);
+    }
+    return result;
   } catch {
     throw new Error(`Error al procesar respuesta de Google Apps Script: ${text.substring(0, 200)}`);
   }
@@ -80,24 +150,24 @@ async function appsScriptPost<T>(payload: Record<string, unknown>): Promise<T> {
 
 // ============ MILITANTES ============
 
-export async function getMilitantes(): Promise<ApiResponse<Militante[]>> {
-  return appsScriptGet<ApiResponse<Militante[]>>('getMilitantes');
+export async function getMilitantes(forceFresh = false): Promise<ApiResponse<Militante[]>> {
+  return appsScriptGet<ApiResponse<Militante[]>>('getMilitantes', {}, { ttlSeconds: 25, forceFresh });
 }
 
 export async function findMilitanteByPhone(telefono: string): Promise<VerifyPhoneResult> {
-  return appsScriptGet<VerifyPhoneResult>('findByPhone', { telefono });
+  return appsScriptGet<VerifyPhoneResult>('findByPhone', { telefono }, { ttlSeconds: 15 });
 }
 
 export async function checkDni(dni: string): Promise<DniCheckResult> {
-  return appsScriptGet<DniCheckResult>('checkDni', { dni });
+  return appsScriptGet<DniCheckResult>('checkDni', { dni }, { ttlSeconds: 15 });
 }
 
 export async function searchMilitantes(query: string): Promise<ApiResponse<Militante[]>> {
-  return appsScriptGet<ApiResponse<Militante[]>>('searchMilitantes', { q: query });
+  return appsScriptGet<ApiResponse<Militante[]>>('searchMilitantes', { q: query }, { ttlSeconds: 15 });
 }
 
-export async function getStats(): Promise<ApiResponse<StatsData>> {
-  return appsScriptGet<ApiResponse<StatsData>>('getStats');
+export async function getStats(forceFresh = false): Promise<ApiResponse<StatsData>> {
+  return appsScriptGet<ApiResponse<StatsData>>('getStats', {}, { ttlSeconds: 25, forceFresh });
 }
 
 export async function approveMilitante(data: {
@@ -163,12 +233,12 @@ export async function deleteMilitante(data: {
 
 // ============ USUARIOS ============
 
-export async function getUsuarios(): Promise<ApiResponse<Usuario[]>> {
-  return appsScriptGet<ApiResponse<Usuario[]>>('getUsuarios');
+export async function getUsuarios(forceFresh = false): Promise<ApiResponse<Usuario[]>> {
+  return appsScriptGet<ApiResponse<Usuario[]>>('getUsuarios', {}, { ttlSeconds: 30, forceFresh });
 }
 
 export async function findUsuarioByUsername(username: string): Promise<ApiResponse<Usuario & { found: boolean }>> {
-  return appsScriptGet<ApiResponse<Usuario & { found: boolean }>>('findUsuario', { username });
+  return appsScriptGet<ApiResponse<Usuario & { found: boolean }>>('findUsuario', { username }, { ttlSeconds: 15 });
 }
 
 export async function addUsuario(data: {
@@ -187,12 +257,12 @@ export async function addUsuario(data: {
 
 // ============ EVENTOS Y ASISTENCIA (v2.3) ============
 
-export async function getEventos(): Promise<ApiResponse<Evento[]>> {
-  return appsScriptGet<ApiResponse<Evento[]>>('getEventos');
+export async function getEventos(forceFresh = false): Promise<ApiResponse<Evento[]>> {
+  return appsScriptGet<ApiResponse<Evento[]>>('getEventos', {}, { ttlSeconds: 20, forceFresh });
 }
 
 export async function getEventoById(id_evento: string): Promise<ApiResponse<Evento>> {
-  return appsScriptGet<ApiResponse<Evento>>('getEventoById', { id_evento });
+  return appsScriptGet<ApiResponse<Evento>>('getEventoById', { id_evento }, { ttlSeconds: 15 });
 }
 
 export async function addEvento(data: {
@@ -222,10 +292,10 @@ export async function updateEvento(data: {
   });
 }
 
-export async function getAsistencia(id_evento?: string): Promise<ApiResponse<Asistencia[]>> {
+export async function getAsistencia(id_evento?: string, forceFresh = false): Promise<ApiResponse<Asistencia[]>> {
   const params: Record<string, string> = {};
   if (id_evento) params.id_evento = id_evento;
-  return appsScriptGet<ApiResponse<Asistencia[]>>('getAsistencia', params);
+  return appsScriptGet<ApiResponse<Asistencia[]>>('getAsistencia', params, { ttlSeconds: 15, forceFresh });
 }
 
 export async function checkAsistencia(

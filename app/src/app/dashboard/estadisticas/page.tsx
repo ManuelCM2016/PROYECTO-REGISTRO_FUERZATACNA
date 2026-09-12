@@ -88,11 +88,30 @@ export default function EstadisticasRankingPage() {
   }, []);
 
   const fetchEstadisticas = async (isManual = false) => {
+    // 1. Cargar instantáneamente de sessionStorage si existe copia previa
+    if (!isManual && typeof window !== 'undefined') {
+      try {
+        const cachedStr = sessionStorage.getItem('ft_cache_estadisticas');
+        if (cachedStr) {
+          const cached = JSON.parse(cachedStr);
+          if (cached && cached.resumen) {
+            setResumen(cached.resumen);
+            setRanking(cached.ranking || []);
+            setBases(cached.bases || []);
+            setEventos(cached.eventos || []);
+            setMetodos(cached.metodos || { qr_puerta: 0, scan_admin: 0, manual: 0 });
+            setLoading(false); // Renderizado instantáneo (0ms) sin siluetas
+          }
+        }
+      } catch {}
+    }
+
     if (isManual) setRefreshing(true);
-    else setLoading(true);
+    else if (!resumen) setLoading(true);
 
     try {
-      const res = await fetch('/api/estadisticas');
+      const url = isManual ? '/api/estadisticas?fresh=true' : '/api/estadisticas';
+      const res = await fetch(url);
       const json = await res.json();
 
       if (json.success && json.data) {
@@ -102,14 +121,18 @@ export default function EstadisticasRankingPage() {
         setEventos(json.data.eventos || []);
         setMetodos(json.data.metodos || { qr_puerta: 0, scan_admin: 0, manual: 0 });
 
+        if (typeof window !== 'undefined') {
+          sessionStorage.setItem('ft_cache_estadisticas', JSON.stringify(json.data));
+        }
+
         if (isManual) {
           addToast('success', 'Estadísticas y ranking actualizados en tiempo real');
         }
       } else {
-        addToast('error', json.error || 'Error al cargar estadísticas');
+        if (!resumen) addToast('error', json.error || 'Error al cargar estadísticas');
       }
     } catch {
-      addToast('error', 'Error de conexión al cargar estadísticas');
+      if (!resumen) addToast('error', 'Error de conexión al cargar estadísticas');
     } finally {
       setLoading(false);
       setRefreshing(false);

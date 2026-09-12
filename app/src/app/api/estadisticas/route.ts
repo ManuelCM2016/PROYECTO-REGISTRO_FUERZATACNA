@@ -1,15 +1,18 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { getMilitantes, getEventos, getAsistencia } from '@/lib/google-sheets';
 import type { Militante, Evento, Asistencia } from '@/types';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
+    const { searchParams } = new URL(request.url);
+    const forceFresh = searchParams.get('fresh') === 'true';
+
     const [resMilitantes, resEventos, resAsistencias] = await Promise.all([
-      getMilitantes().catch(() => ({ success: false, data: [] as Militante[] })),
-      getEventos().catch(() => ({ success: false, data: [] as Evento[] })),
-      getAsistencia().catch(() => ({ success: false, data: [] as Asistencia[] })),
+      getMilitantes(forceFresh).catch(() => ({ success: false, data: [] as Militante[] })),
+      getEventos(forceFresh).catch(() => ({ success: false, data: [] as Evento[] })),
+      getAsistencia(undefined, forceFresh).catch(() => ({ success: false, data: [] as Asistencia[] })),
     ]);
 
     const militantes: Militante[] = resMilitantes.success && Array.isArray(resMilitantes.data) ? resMilitantes.data : [];
@@ -240,32 +243,39 @@ export async function GET() {
       };
     });
 
-    return NextResponse.json({
-      success: true,
-      data: {
-        resumen: {
-          totalMilitantes: militantesTotales,
-          completados,
-          pendientes,
-          enRevision,
-          inactivos,
-          rechazados,
-          totalEventos,
-          eventosActivos,
-          eventosFinalizados,
-          totalAsistencias,
-          tasaPromedio: totalEventos > 0 ? (totalAsistencias / totalEventos).toFixed(1) : '0',
-        },
-        ranking: rankingFinal,
-        bases: basesStats,
-        eventos: eventosStats,
-        metodos: {
-          qr_puerta: countQrPuerta,
-          scan_admin: countScanAdmin,
-          manual: countManual,
+    return NextResponse.json(
+      {
+        success: true,
+        data: {
+          resumen: {
+            totalMilitantes: militantesTotales,
+            completados,
+            pendientes,
+            enRevision,
+            inactivos,
+            rechazados,
+            totalEventos,
+            eventosActivos,
+            eventosFinalizados,
+            totalAsistencias,
+            tasaPromedio: totalEventos > 0 ? (totalAsistencias / totalEventos).toFixed(1) : '0',
+          },
+          ranking: rankingFinal,
+          bases: basesStats,
+          eventos: eventosStats,
+          metodos: {
+            qr_puerta: countQrPuerta,
+            scan_admin: countScanAdmin,
+            manual: countManual,
+          },
         },
       },
-    });
+      {
+        headers: {
+          'Cache-Control': 'public, s-maxage=20, stale-while-revalidate=40',
+        },
+      }
+    );
   } catch (error) {
     console.error('Error generating statistics:', error);
     return NextResponse.json(
