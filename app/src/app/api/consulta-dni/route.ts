@@ -20,7 +20,10 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const apiToken = process.env.DECOLECTA_API_TOKEN?.trim() || '';
+    // Usa la variable de entorno o el token asignado por defecto
+    const apiToken =
+      process.env.DECOLECTA_API_TOKEN?.trim() ||
+      'sk_19333.UBG8h18psoccRBccRqpF0q3oA92pTNx1';
 
     if (!apiToken) {
       return NextResponse.json({
