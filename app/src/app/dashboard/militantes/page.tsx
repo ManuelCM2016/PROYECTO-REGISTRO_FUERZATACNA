@@ -29,9 +29,13 @@ function MilitantesContent() {
 
   // Filter state
   const statusParam = searchParams.get('estado');
-  const [statusFilter, setStatusFilter] = useState<FilterStatus>(
-    statusParam === 'en_revision' ? 'en_revision' : statusParam === 'inactivo' ? 'inactivo' : 'todos'
-  );
+  const [statusFilter, setStatusFilter] = useState<FilterStatus>(() => {
+    if (statusParam === 'en_revision') return 'en_revision';
+    if (statusParam === 'inactivo') return 'inactivo';
+    if (statusParam === 'todos') return 'todos';
+    if (statusParam === 'pendiente') return 'pendiente';
+    return 'completado'; // ★ Por defecto solo muestra Militantes Confirmados
+  });
 
   // Sync filter with URL param
   useEffect(() => {
@@ -39,6 +43,12 @@ function MilitantesContent() {
       setStatusFilter('en_revision');
     } else if (statusParam === 'inactivo') {
       setStatusFilter('inactivo');
+    } else if (statusParam === 'todos') {
+      setStatusFilter('todos');
+    } else if (statusParam === 'pendiente') {
+      setStatusFilter('pendiente');
+    } else {
+      setStatusFilter('completado');
     }
   }, [statusParam]);
 
@@ -483,7 +493,6 @@ function MilitantesContent() {
     if (statusFilter === 'inactivo') return m.estado_registro === 'inactivo';
     return true;
   });
-
   // Pagination
   const totalPages = Math.ceil(filteredMilitantes.length / itemsPerPage);
   const paginatedMilitantes = filteredMilitantes.slice(
@@ -498,6 +507,10 @@ function MilitantesContent() {
       router.replace('/dashboard/militantes?estado=en_revision');
     } else if (newFilter === 'inactivo') {
       router.replace('/dashboard/militantes?estado=inactivo');
+    } else if (newFilter === 'todos') {
+      router.replace('/dashboard/militantes?estado=todos');
+    } else if (newFilter === 'pendiente') {
+      router.replace('/dashboard/militantes?estado=pendiente');
     } else {
       router.replace('/dashboard/militantes');
     }
@@ -514,9 +527,27 @@ function MilitantesContent() {
             className="w-12 h-12 rounded-xl object-cover border-2 border-accent-400/50 shadow-lg shadow-accent-500/20"
           />
           <div>
-            <h1 className="text-2xl font-black text-[#f8f9f9] tracking-wide">Padrón de Militantes</h1>
+            <h1 className="text-2xl font-black text-[#f8f9f9] tracking-wide">
+              {statusFilter === 'en_revision'
+                ? 'Militantes y Simpatizantes en Revisión'
+                : statusFilter === 'completado'
+                ? 'Padrón de Militantes Confirmados'
+                : statusFilter === 'inactivo'
+                ? 'Militantes Inactivos'
+                : statusFilter === 'pendiente'
+                ? 'Militantes Pendientes'
+                : 'Padrón General de Militantes'}
+            </h1>
             <p className="text-xs text-primary-200/80 mt-0.5">
-              Gestión central de militantes y revisión de incorporaciones
+              {statusFilter === 'en_revision'
+                ? 'Solicitudes de incorporación y simpatizantes en eventos pendientes de aprobación'
+                : statusFilter === 'completado'
+                ? 'Militantes oficiales confirmados y activos de Fuerza Tacna'
+                : statusFilter === 'inactivo'
+                ? 'Militantes dados de baja o inactivos'
+                : statusFilter === 'pendiente'
+                ? 'Militantes con registro pendiente de completar'
+                : 'Padrón general histórico de militantes y simpatizantes'}
             </p>
           </div>
         </div>
@@ -637,7 +668,7 @@ function MilitantesContent() {
           >
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs text-emerald-400 font-bold uppercase tracking-wider">Completados</p>
+                <p className="text-xs text-emerald-400 font-bold uppercase tracking-wider">Confirmados</p>
                 <p className="text-3xl font-black text-emerald-400 mt-1">{stats.completados}</p>
               </div>
               <div className="w-12 h-12 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center">
@@ -648,9 +679,32 @@ function MilitantesContent() {
             </div>
             {stats.total > 0 && (
               <p className="text-[11px] text-emerald-300/70 mt-2">
-                {((stats.completados / stats.total) * 100).toFixed(1)}% del padrón
+                {Math.round((stats.completados / stats.total) * 100)}% del padrón total
               </p>
             )}
+          </div>
+
+          {/* Card: Inactivos / Rechazados */}
+          <div
+            onClick={() => selectFilter('inactivo')}
+            className={`glass-card rounded-2xl p-5 cursor-pointer transition-all duration-300 hover:scale-[1.02] border ${
+              statusFilter === 'inactivo'
+                ? 'ring-2 ring-slate-400 border-slate-400/40'
+                : 'border-primary-200/10 hover:border-slate-500/30'
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-slate-400 font-semibold uppercase tracking-wider">Inactivos</p>
+                <p className="text-3xl font-black text-slate-300 mt-1">{stats.inactivos || 0}</p>
+              </div>
+              <div className="w-12 h-12 rounded-xl bg-slate-800/80 border border-slate-700/40 flex items-center justify-center">
+                <svg className="w-6 h-6 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                </svg>
+              </div>
+            </div>
+            <p className="text-[11px] text-slate-400/70 mt-2">Bajas del padrón</p>
           </div>
 
           {/* Card: Pendientes */}
@@ -684,14 +738,15 @@ function MilitantesContent() {
         {/* Pills de Filtro Rápido */}
         <div className="flex items-center gap-1.5 p-1 bg-surface-850/90 rounded-xl border border-primary-200/15 overflow-x-auto">
           <button
-            onClick={() => selectFilter('todos')}
-            className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap cursor-pointer ${
-              statusFilter === 'todos'
-                ? 'bg-primary-600 text-[#f8f9f9] shadow-sm'
-                : 'text-primary-200/70 hover:text-white hover:bg-primary-900/30'
+            onClick={() => selectFilter('completado')}
+            className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
+              statusFilter === 'completado'
+                ? 'bg-emerald-500 text-white shadow-sm'
+                : 'text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10'
             }`}
           >
-            Todos ({militantes.length})
+            <span className="w-2 h-2 rounded-full bg-emerald-400" />
+            Militantes Confirmados ({stats?.completados || 0})
           </button>
           <button
             onClick={() => selectFilter('en_revision')}
@@ -705,14 +760,14 @@ function MilitantesContent() {
             En Revisión ({stats?.en_revision || 0})
           </button>
           <button
-            onClick={() => selectFilter('completado')}
+            onClick={() => selectFilter('todos')}
             className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap cursor-pointer ${
-              statusFilter === 'completado'
-                ? 'bg-emerald-500 text-white shadow-sm'
-                : 'text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10'
+              statusFilter === 'todos'
+                ? 'bg-primary-600 text-[#f8f9f9] shadow-sm'
+                : 'text-primary-200/70 hover:text-white hover:bg-primary-900/30'
             }`}
           >
-            Completados ({stats?.completados || 0})
+            Todos ({militantes.length})
           </button>
           <button
             onClick={() => selectFilter('pendiente')}
@@ -803,7 +858,9 @@ function MilitantesContent() {
                         ? 'No se encontraron resultados con ese criterio'
                         : statusFilter === 'en_revision'
                         ? '¡Excelente! No hay solicitudes pendientes de revisión'
-                        : 'No hay militantes en esta sección'}
+                        : statusFilter === 'completado'
+                        ? 'Aún no hay militantes confirmados en esta lista'
+                        : 'No hay registros en esta sección'}
                     </td>
                   </tr>
                 ) : (

@@ -1146,6 +1146,22 @@ function handleGetAsistencia(id_evento) {
   const sheetAsist = getSheet(SHEET_ASISTENCIA);
   if (!sheetAsist) return jsonResponse({ success: false, error: 'No se encontró la pestaña Asistencia' });
   
+  // Mapa para cruzar el estado del militante desde Base_Militantes
+  const sheetMilit = getSheet(SHEET_MILITANTES);
+  const militMap = {};
+  if (sheetMilit) {
+    const dataM = sheetMilit.getDataRange().getValues();
+    for (let m = 1; m < dataM.length; m++) {
+      const d = String(dataM[m][COL_M.DNI] || '').replace(/\D/g, '').trim();
+      if (d) {
+        militMap[d] = {
+          estado: String(dataM[m][COL_M.ESTADO_REGISTRO] || '').trim().toLowerCase(),
+          base: String(dataM[m][COL_M.BASE] || '').trim()
+        };
+      }
+    }
+  }
+
   const data = sheetAsist.getDataRange().getValues();
   const searchEvId = id_evento ? String(id_evento).trim() : null;
   const asistentes = [];
@@ -1156,18 +1172,23 @@ function handleGetAsistencia(id_evento) {
     if (!evId) continue;
     
     if (!searchEvId || evId === searchEvId) {
+      const rowDni = String(row[COL_AS.DNI] || '').replace(/\D/g, '').trim();
+      const mInfo = militMap[rowDni] || null;
+      const estadoMilit = mInfo && mInfo.estado ? mInfo.estado : 'en_revision';
+
       asistentes.push({
         rowIndex: i + 1,
         id_asistencia: String(row[COL_AS.ID_ASISTENCIA] || '').trim(),
         id_evento: evId,
         titulo_evento: String(row[COL_AS.TITULO_EVENTO] || '').trim(),
-        dni: String(row[COL_AS.DNI] || '').replace(/\D/g, '').trim(),
+        dni: rowDni,
         nombres: String(row[COL_AS.NOMBRES] || '').trim(),
         apellidos: String(row[COL_AS.APELLIDOS] || '').trim(),
-        base: String(row[COL_AS.BASE] || '').trim(),
+        base: String(row[COL_AS.BASE] || (mInfo ? mInfo.base : '')).trim(),
         telefono: String(row[COL_AS.TELEFONO] || '').trim(),
         fecha_hora: cleanSheetDateTime(row[COL_AS.FECHA_HORA]),
-        metodo: String(row[COL_AS.METODO] || 'manual').trim()
+        metodo: String(row[COL_AS.METODO] || 'manual').trim(),
+        estado_militante: estadoMilit
       });
     }
   }
@@ -1366,7 +1387,8 @@ function handleMarcarAsistencia(payload) {
         apellidos: militante.apellidos,
         base: militante.base,
         fecha_hora: nowStr,
-        metodo: safeMetodo
+        metodo: safeMetodo,
+        estado_militante: militante.estado_registro
       }
     });
   } catch(err) {

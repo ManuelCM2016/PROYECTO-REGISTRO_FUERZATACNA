@@ -106,5 +106,6 @@ export interface Asistencia {
   telefono: string;
   fecha_hora: string;
   metodo: 'qr_puerta' | 'scan_admin' | 'manual';
+  estado_militante?: 'completado' | 'en_revision' | 'pendiente' | string;
 }
 

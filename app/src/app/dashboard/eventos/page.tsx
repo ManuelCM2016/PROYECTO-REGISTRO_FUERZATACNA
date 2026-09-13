@@ -788,12 +788,24 @@ export default function EventosPage() {
         playSuccessBeep();
         addToast(
           'success',
-          `¡Asistencia registrada! ${newDoorMilitante.nombres.trim()} guardado(a) en "En Revisión".`
+          `¡Asistencia confirmada! ${newDoorMilitante.nombres.trim()} registrado(a) en "En Revisión" para aprobación posterior.`
         );
 
         setManualDni('');
         setManualNotFound(false);
         setNewDoorMilitante({ nombres: '', apellidos: '', telefono: '', base: '' });
+
+        // Invalidar caché local para refrescar contador y lista de "En Revisión"
+        if (typeof window !== 'undefined') {
+          sessionStorage.removeItem('ft_cache_militantes');
+          const currentInReview = parseInt(sessionStorage.getItem('ft_in_review_count') || '0', 10);
+          sessionStorage.setItem('ft_in_review_count', String(currentInReview + 1));
+          window.dispatchEvent(
+            new CustomEvent('ft_stats_updated', {
+              detail: { en_revision: currentInReview + 1 },
+            })
+          );
+        }
 
         await loadAsistencia(selectedEvent.id_evento, true);
         setSelectedEvent((prev) =>
@@ -1625,6 +1637,7 @@ export default function EventosPage() {
                         <th className="px-4 py-3">#</th>
                         <th className="px-4 py-3">DNI</th>
                         <th className="px-4 py-3">Nombres y Apellidos</th>
+                        <th className="px-4 py-3">Condición</th>
                         <th className="px-4 py-3 hidden sm:table-cell">Base</th>
                         <th className="px-4 py-3 hidden md:table-cell">Teléfono</th>
                         <th className="px-4 py-3">Hora Registro</th>
@@ -1632,43 +1645,69 @@ export default function EventosPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {asistentes.map((a, i) => (
-                        <tr
-                          key={`${a.id_asistencia}-${i}`}
-                          className="border-b border-white/5 hover:bg-white/[0.02] transition-colors"
-                        >
-                          <td className="px-4 py-3 text-slate-500 font-mono text-xs">{i + 1}</td>
-                          <td className="px-4 py-3 font-mono font-bold text-white">{a.dni}</td>
-                          <td className="px-4 py-3 text-slate-200 font-medium">
-                            {a.nombres} {a.apellidos}
-                          </td>
-                          <td className="px-4 py-3 text-sky-400 text-xs hidden sm:table-cell">
-                            {a.base || '—'}
-                          </td>
-                          <td className="px-4 py-3 text-slate-400 font-mono text-xs hidden md:table-cell">
-                            {a.telefono || '—'}
-                          </td>
-                          <td className="px-4 py-3 text-slate-300 font-mono text-xs">
-                            {formatFechaHora(a.fecha_hora)}
-                          </td>
-                          <td className="px-4 py-3">
-                            <span
-                              className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold ${a.metodo === 'qr_puerta'
-                                  ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
-                                  : a.metodo === 'scan_admin'
-                                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                                    : 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
+                      {asistentes.map((a, i) => {
+                        const isInReview = a.estado_militante === 'en_revision';
+                        return (
+                          <tr
+                            key={`${a.id_asistencia}-${i}`}
+                            className={`border-b border-white/5 hover:bg-white/[0.02] transition-colors ${
+                              isInReview ? 'bg-amber-500/[0.04]' : ''
+                            }`}
+                          >
+                            <td className="px-4 py-3 text-slate-500 font-mono text-xs">{i + 1}</td>
+                            <td className="px-4 py-3 font-mono font-bold text-white">{a.dni}</td>
+                            <td className="px-4 py-3 text-slate-200 font-medium">
+                              {a.nombres} {a.apellidos}
+                            </td>
+                            <td className="px-4 py-3">
+                              {isInReview ? (
+                                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                                  En Revisión
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                                  Confirmado
+                                </span>
+                              )}
+                            </td>
+                            <td className="px-4 py-3 text-xs hidden sm:table-cell">
+                              {isInReview ? (
+                                <span>
+                                  <span className="text-amber-300 font-semibold">{a.base || 'Tacna'}</span>
+                                  <span className="text-[10px] text-slate-500 block sm:inline sm:ml-1">(Por validar)</span>
+                                </span>
+                              ) : (
+                                <span className="text-sky-400 font-medium">{a.base || '—'}</span>
+                              )}
+                            </td>
+                            <td className="px-4 py-3 text-slate-400 font-mono text-xs hidden md:table-cell">
+                              {a.telefono || '—'}
+                            </td>
+                            <td className="px-4 py-3 text-slate-300 font-mono text-xs">
+                              {formatFechaHora(a.fecha_hora)}
+                            </td>
+                            <td className="px-4 py-3">
+                              <span
+                                className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold ${
+                                  a.metodo === 'qr_puerta'
+                                    ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
+                                    : a.metodo === 'scan_admin'
+                                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                                      : 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
                                 }`}
-                            >
-                              {a.metodo === 'qr_puerta'
-                                ? 'Puerta QR'
-                                : a.metodo === 'scan_admin'
-                                  ? 'Escáner Admin'
-                                  : 'Manual'}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
+                              >
+                                {a.metodo === 'qr_puerta'
+                                  ? 'Puerta QR'
+                                  : a.metodo === 'scan_admin'
+                                    ? 'Escáner Admin'
+                                    : 'Manual'}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
