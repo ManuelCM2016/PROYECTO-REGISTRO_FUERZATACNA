@@ -39,7 +39,5 @@ yarn-error.log*
 next-env.d.ts
 */next-env.d.ts
 
-# OS generated files
-.DS_Store
-Thumbs.db
-Desktop.ini
+# IDE & Agents
+.agents/

@@ -396,6 +396,14 @@ export async function updateEvento(data: {
   });
 }
 
+export async function deleteEvento(id_evento: string, rowIndex?: number): Promise<ApiResponse> {
+  return appsScriptPost<ApiResponse>({
+    action: 'deleteEvento',
+    id_evento,
+    rowIndex,
+  });
+}
+
 export async function getAsistencia(id_evento?: string, forceFresh = false): Promise<ApiResponse<Asistencia[]>> {
   const params: Record<string, string> = {};
   if (id_evento) params.id_evento = id_evento;

@@ -242,3 +242,63 @@ input:-webkit-autofill:focus {
   0%, 100% { transform: translateY(0); }
   50% { transform: translateY(-10px); }
 }
+
+/* ---- Html5Qrcode Scanner responsive adjustments for mobile ---- */
+#reader-cam {
+  width: 100% !important;
+  height: 100% !important;
+  position: relative !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  background-color: #000 !important;
+  border: none !important;
+  overflow: hidden !important;
+  border-radius: 1rem !important;
+}
+
+#reader-cam video {
+  width: 100% !important;
+  height: 100% !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+  object-fit: cover !important;
+  border-radius: 1rem !important;
+}
+
+#reader-cam img[alt="Info icon"] {
+  display: none !important;
+}
+
+#reader-cam__scan_region {
+  width: 100% !important;
+  height: 100% !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+#qr-shaded-region {
+  border-color: rgba(0, 0, 0, 0.55) !important;
+}
+
+#qr-shaded-region > div {
+  box-shadow: 0 0 10px rgba(245, 158, 11, 0.7) !important;
+  border-radius: 2px !important;
+}
+
+@keyframes scanner-line {
+  0%, 100% {
+    top: 8%;
+    opacity: 0.3;
+  }
+  50% {
+    top: 92%;
+    opacity: 1;
+  }
+}
+
+.animate-scanner-line {
+  animation: scanner-line 2.2s ease-in-out infinite;
+}
+

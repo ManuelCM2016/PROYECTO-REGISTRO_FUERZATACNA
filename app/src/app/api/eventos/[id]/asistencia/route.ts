@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth';
-import { getAsistencia, marcarAsistencia } from '@/lib/google-sheets';
+import { getAsistencia, marcarAsistencia, addMilitante } from '@/lib/google-sheets';
 
 export async function GET(
   request: NextRequest,
@@ -44,7 +44,7 @@ export async function POST(
   try {
     const { id } = await params;
     const body = await request.json();
-    const { dni, metodo } = body;
+    const { dni, metodo, nuevoMilitante } = body;
 
     if (!dni) {
       return NextResponse.json(
@@ -65,6 +65,50 @@ export async function POST(
     const lockKey = `${id}:${cleanDni}`;
     const now = Date.now();
     const lastAttempt = recentAsistenciaLocks.get(lockKey);
+
+    if (lastAttempt && (now - lastAttempt) < 8000) {
+      return NextResponse.json({
+        success: false,
+        alreadyMarked: true,
+        message: `La asistencia para el DNI ${cleanDni} ya fue procesada hace unos instantes.`,
+        data: { dni: cleanDni }
+      });
+    }
+
+    // Si viene nuevoMilitante (no empadronado que se inscribe en puerta en estado 'en_revision')
+    if (nuevoMilitante) {
+      const { nombres, apellidos, telefono, base, canal_registro } = nuevoMilitante;
+      if (!nombres || !apellidos) {
+        return NextResponse.json(
+          { success: false, error: 'Nombres y apellidos son requeridos para la inscripción' },
+          { status: 400 }
+        );
+      }
+
+      const cleanPhone = String(telefono || '').trim();
+      const safePhone = cleanPhone.startsWith('+')
+        ? cleanPhone
+        : cleanPhone
+        ? `+51 ${cleanPhone}`
+        : '+51 900000000';
+
+      const addResult = await addMilitante({
+        telefono: safePhone,
+        nombres: String(nombres).trim().toUpperCase(),
+        apellidos: String(apellidos).trim().toUpperCase(),
+        dni: cleanDni,
+        base: String(base || 'Tacna').trim(),
+        estado_registro: 'en_revision',
+        canal_registro: canal_registro || 'Evento Presencial',
+      });
+
+      if (!addResult.success) {
+        return NextResponse.json(
+          { success: false, error: addResult.error || 'Error al registrar a la persona en revisión' },
+          { status: 400 }
+        );
+      }
+    }
 
     if (lastAttempt && (now - lastAttempt) < 8000) {
       return NextResponse.json({

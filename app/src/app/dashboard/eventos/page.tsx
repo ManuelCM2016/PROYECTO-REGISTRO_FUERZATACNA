@@ -8,7 +8,7 @@ import Modal from '@/components/ui/Modal';
 import Badge from '@/components/ui/Badge';
 import { SkeletonCard, SkeletonTable } from '@/components/ui/Skeleton';
 import { useToast } from '@/components/ui/Toast';
-import { formatFecha, formatHora, formatFechaHora } from '@/lib/formatters';
+import { formatFecha, formatHora, formatFechaHora, formatFechaParaInput } from '@/lib/formatters';
 import type { Evento, Asistencia } from '@/types';
 
 // Reproduce un agradable "bip" sintetizado de confirmación con Web Audio API
@@ -47,6 +47,31 @@ export default function EventosPage() {
     lugar: '',
   });
 
+  // Estados para Edición de Evento
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [editingEvent, setEditingEvent] = useState<Evento | null>(null);
+  const [editEventData, setEditEventData] = useState<{
+    id_evento: string;
+    titulo: string;
+    fecha: string;
+    hora: string;
+    lugar: string;
+    estado: 'activo' | 'finalizado';
+  }>({
+    id_evento: '',
+    titulo: '',
+    fecha: '',
+    hora: '',
+    lugar: '',
+    estado: 'activo',
+  });
+  const [savingEdit, setSavingEdit] = useState(false);
+
+  // Estados para Eliminación de Evento (con advertencia obligatoria)
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [eventToDelete, setEventToDelete] = useState<Evento | null>(null);
+  const [deletingEvent, setDeletingEvent] = useState(false);
+
   // Evento Seleccionado para Gestión de Asistencia
   const [selectedEvent, setSelectedEvent] = useState<Evento | null>(null);
   const [activeTab, setActiveTab] = useState<'scan' | 'manual' | 'list'>('scan');
@@ -80,6 +105,15 @@ export default function EventosPage() {
   const [manualMilitanteResult, setManualMilitanteResult] = useState<any | null>(null);
   const [manualNotFound, setManualNotFound] = useState(false);
   const [registeringManual, setRegisteringManual] = useState(false);
+
+  // Formulario para registrar simpatizante no empadronado en puerta
+  const [newDoorMilitante, setNewDoorMilitante] = useState({
+    nombres: '',
+    apellidos: '',
+    telefono: '',
+    base: '',
+  });
+  const [registeringDoorMilitante, setRegisteringDoorMilitante] = useState(false);
 
   // Cargar lista de eventos al iniciar
   useEffect(() => {
@@ -118,7 +152,7 @@ export default function EventosPage() {
             setLoading(false);
           }
         }
-      } catch {}
+      } catch { }
     }
 
     if (forceFresh) {
@@ -162,7 +196,7 @@ export default function EventosPage() {
             setLoadingAsistencia(false);
           }
         }
-      } catch {}
+      } catch { }
     }
 
     if (!sessionStorage.getItem(`ft_cache_asistencia_${idEvento}`)) {
@@ -259,6 +293,159 @@ export default function EventosPage() {
     window.print();
   };
 
+  // Abrir Modal de Edición
+  const openEditModal = (evento: Evento) => {
+    setEditingEvent(evento);
+    setEditEventData({
+      id_evento: evento.id_evento,
+      titulo: evento.titulo,
+      fecha: formatFechaParaInput(evento.fecha) || new Date().toISOString().split('T')[0],
+      hora: formatHora(evento.hora) || '18:00',
+      lugar: evento.lugar || '',
+      estado: evento.estado || 'activo',
+    });
+    setEditModalOpen(true);
+  };
+
+  // Guardar Cambios de Edición
+  const handleSaveEditEvent = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!editingEvent) return;
+    setSavingEdit(true);
+    try {
+      const res = await fetch(`/api/eventos/${editingEvent.id_evento}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          titulo: editEventData.titulo.trim(),
+          fecha: editEventData.fecha,
+          hora: editEventData.hora,
+          lugar: editEventData.lugar.trim(),
+          estado: editEventData.estado,
+        }),
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        addToast('success', 'Evento actualizado exitosamente');
+        setEditModalOpen(false);
+
+        // Actualizar en estado local
+        setEventos((prev) =>
+          prev.map((ev) =>
+            ev.id_evento === editingEvent.id_evento
+              ? {
+                ...ev,
+                titulo: editEventData.titulo.trim(),
+                fecha: editEventData.fecha,
+                hora: editEventData.hora,
+                lugar: editEventData.lugar.trim(),
+                estado: editEventData.estado,
+              }
+              : ev
+          )
+        );
+
+        // Si es el evento seleccionado en el panel, actualizarlo
+        if (selectedEvent?.id_evento === editingEvent.id_evento) {
+          setSelectedEvent((prev) =>
+            prev
+              ? {
+                ...prev,
+                titulo: editEventData.titulo.trim(),
+                fecha: editEventData.fecha,
+                hora: editEventData.hora,
+                lugar: editEventData.lugar.trim(),
+                estado: editEventData.estado,
+              }
+              : null
+          );
+        }
+
+        // Actualizar en sessionStorage
+        if (typeof window !== 'undefined') {
+          try {
+            const cachedStr = sessionStorage.getItem('ft_cache_eventos');
+            if (cachedStr) {
+              const cached: Evento[] = JSON.parse(cachedStr);
+              const updated = cached.map((ev) =>
+                ev.id_evento === editingEvent.id_evento
+                  ? {
+                    ...ev,
+                    titulo: editEventData.titulo.trim(),
+                    fecha: editEventData.fecha,
+                    hora: editEventData.hora,
+                    lugar: editEventData.lugar.trim(),
+                    estado: editEventData.estado,
+                  }
+                  : ev
+              );
+              sessionStorage.setItem('ft_cache_eventos', JSON.stringify(updated));
+            }
+          } catch { }
+        }
+      } else {
+        addToast('error', data.error || 'Error al actualizar evento');
+      }
+    } catch {
+      addToast('error', 'Error de conexión');
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  // Abrir Modal de Confirmación de Eliminación (con advertencia obligatoria)
+  const openDeleteModal = (evento: Evento) => {
+    setEventToDelete(evento);
+    setDeleteModalOpen(true);
+  };
+
+  // Confirmar Eliminación de Evento
+  const handleConfirmDeleteEvent = async () => {
+    if (!eventToDelete) return;
+    setDeletingEvent(true);
+    try {
+      const res = await fetch(`/api/eventos/${eventToDelete.id_evento}`, {
+        method: 'DELETE',
+      });
+      const data = await res.json();
+      if (data.success) {
+        addToast('success', data.message || 'Evento eliminado correctamente');
+        setDeleteModalOpen(false);
+
+        // Remover de la lista en memoria
+        setEventos((prev) => prev.filter((ev) => ev.id_evento !== eventToDelete.id_evento));
+
+        // Si estaba abierto el evento eliminado, regresar a la vista de lista
+        if (selectedEvent?.id_evento === eventToDelete.id_evento) {
+          stopCameraScanner();
+          setSelectedEvent(null);
+        }
+
+        // Remover de caché de sesión
+        if (typeof window !== 'undefined') {
+          try {
+            const cachedStr = sessionStorage.getItem('ft_cache_eventos');
+            if (cachedStr) {
+              const cached: Evento[] = JSON.parse(cachedStr);
+              const updated = cached.filter((ev) => ev.id_evento !== eventToDelete.id_evento);
+              sessionStorage.setItem('ft_cache_eventos', JSON.stringify(updated));
+            }
+            sessionStorage.removeItem(`ft_cache_asistencia_${eventToDelete.id_evento}`);
+          } catch { }
+        }
+
+        setEventToDelete(null);
+      } else {
+        addToast('error', data.error || 'Error al eliminar evento');
+      }
+    } catch {
+      addToast('error', 'Error de conexión al eliminar evento');
+    } finally {
+      setDeletingEvent(false);
+    }
+  };
+
   // ---- CONTROLADOR DE ASISTENCIA: CÁMARA (MODALIDAD 1) ----
   const startCameraScanner = async () => {
     try {
@@ -270,18 +457,28 @@ export default function EventosPage() {
       if (html5QrCodeRef.current) {
         try {
           await html5QrCodeRef.current.stop();
-        } catch {}
+        } catch { }
       }
+
+      // Breve pausa para asegurar que el contenedor DOM tenga sus dimensiones renderizadas
+      await new Promise((resolve) => setTimeout(resolve, 80));
 
       const qrScanner = new Html5Qrcode(scannerId);
       html5QrCodeRef.current = qrScanner;
 
+      // Cálculo dinámico para que el recuadro de escaneo sea amplio y cómodo en cualquier celular
+      const qrboxFunction = (viewfinderWidth: number, viewfinderHeight: number) => {
+        const minEdge = Math.min(viewfinderWidth, viewfinderHeight);
+        // Ocupa el 76% del área visible (mínimo 200px, máximo 320px) para enfocar rápido sin ser estrecho
+        const edgeSize = Math.min(Math.max(Math.floor(minEdge * 0.76), 200), 320);
+        return { width: edgeSize, height: edgeSize };
+      };
+
       await qrScanner.start(
         { facingMode: 'environment' }, // Cámara trasera preferida
         {
-          fps: 10,
-          qrbox: { width: 250, height: 250 },
-          aspectRatio: 1.0,
+          fps: 15,
+          qrbox: qrboxFunction,
         },
         (decodedText) => {
           handleQrDecoded(decodedText);
@@ -302,12 +499,65 @@ export default function EventosPage() {
       try {
         await html5QrCodeRef.current.stop();
         html5QrCodeRef.current.clear();
-      } catch {}
+      } catch { }
       html5QrCodeRef.current = null;
     }
   };
 
-  // Procesa el texto detectado por el escáner QR
+  // Cola de procesamiento en segundo plano y caché local de DNIs ya procesados
+  const processedDnisRef = useRef<Set<string>>(new Set());
+  const [pendingQueue, setPendingQueue] = useState<number>(0);
+  const [processedCount, setProcessedCount] = useState<number>(0);
+
+  // Procesa la llamada al servidor en segundo plano (fire-and-forget)
+  const processAttendanceInBackground = useCallback(
+    (dni: string, eventoId: string) => {
+      setPendingQueue((prev) => prev + 1);
+
+      fetch(`/api/eventos/${eventoId}/asistencia`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dni, metodo: 'scan_admin' }),
+      })
+        .then((res) => res.json())
+        .then((result) => {
+          if (result.success && result.data) {
+            // Actualizar lista y contadores
+            loadAsistencia(eventoId, true);
+            setSelectedEvent((prev) =>
+              prev ? { ...prev, total_asistentes: (prev.total_asistentes || 0) + 1 } : null
+            );
+            setEventos((prev) =>
+              prev.map((ev) =>
+                ev.id_evento === eventoId
+                  ? { ...ev, total_asistentes: (ev.total_asistentes || 0) + 1 }
+                  : ev
+              )
+            );
+          } else if (result.alreadyMarked) {
+            // Ya estaba marcado en servidor — no es error, solo info
+          } else if (result.notFound) {
+            // DNI no figura: remover de la cache local para que pueda reintentar
+            processedDnisRef.current.delete(dni);
+            addToast('warning', `DNI ${dni} no figura en el padrón oficial.`);
+          } else {
+            processedDnisRef.current.delete(dni);
+            addToast('error', result.error || `Error al registrar DNI ${dni}`);
+          }
+        })
+        .catch(() => {
+          processedDnisRef.current.delete(dni);
+          addToast('error', `Error de conexión al registrar DNI ${dni}. Se reintentará.`);
+        })
+        .finally(() => {
+          setPendingQueue((prev) => Math.max(0, prev - 1));
+          setProcessedCount((prev) => prev + 1);
+        });
+    },
+    [addToast]
+  );
+
+  // Procesa el texto detectado por el escáner QR — OPTIMISTA Y ULTRA-RÁPIDO
   const handleQrDecoded = useCallback(
     async (decodedText: string) => {
       const currentEvent = selectedEventRef.current;
@@ -345,96 +595,77 @@ export default function EventosPage() {
         return;
       }
 
-      // Verificación de duplicidad síncrona en memoria (Anti-rebote estricto de 6 segundos)
-      const now = Date.now();
-      const lastScan = lastScannedTimeRef.current[extractedDni] || 0;
-      if (now - lastScan < 6000) {
-        // Ignorar de inmediato: ya fue procesado o está en proceso
-        return;
-      }
+      // Anti-rebote: si ya fue escaneado en esta sesión, rechazar inmediatamente
+      if (processedDnisRef.current.has(extractedDni)) {
+        // Verificar anti-rebote temporal de 4 segundos
+        const now = Date.now();
+        const lastScan = lastScannedTimeRef.current[extractedDni] || 0;
+        if (now - lastScan < 4000) return;
 
-      // BLOQUEO INMEDIATO SÍNCRONO (impide que frames subsiguientes de la cámara ejecuten otra llamada)
-      isScanningLockedRef.current = true;
-      lastScannedTimeRef.current[extractedDni] = now;
-      setScanningLocked(true);
-
-      // Pausar procesamiento de frames de la cámara mientras se registra
-      if (html5QrCodeRef.current) {
-        try {
-          html5QrCodeRef.current.pause(true);
-        } catch {}
-      }
-
-      try {
-        const res = await fetch(`/api/eventos/${currentEvent.id_evento}/asistencia`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            dni: extractedDni,
-            metodo: 'scan_admin',
-          }),
-        });
-
-        const result = await res.json();
-
-        if (result.success && result.data) {
-          playSuccessBeep();
-          setLastScannedResult({
-            status: 'success',
-            message: `¡Asistencia registrada!`,
-            militante: {
-              nombres: result.data.nombres,
-              apellidos: result.data.apellidos,
-              dni: result.data.dni,
-              base: result.data.base,
-            },
-          });
-          // Actualizar lista en vivo y contadores optimistas
-          loadAsistencia(currentEvent.id_evento, true);
-          setSelectedEvent((prev) => (prev ? { ...prev, total_asistentes: (prev.total_asistentes || 0) + 1 } : null));
-          setEventos((prev) =>
-            prev.map((ev) =>
-              ev.id_evento === currentEvent.id_evento
-                ? { ...ev, total_asistentes: (ev.total_asistentes || 0) + 1 }
-                : ev
-            )
-          );
-        } else if (result.alreadyMarked) {
-          setLastScannedResult({
-            status: 'already',
-            message: result.message || 'Esta persona ya había marcado asistencia en este evento.',
-            militante: result.data,
-          });
-        } else if (result.notFound) {
-          setLastScannedResult({
-            status: 'not_found',
-            message: `DNI ${extractedDni} no figura en el padrón oficial.`,
-          });
-        } else {
-          setLastScannedResult({
-            status: 'error',
-            message: result.error || 'No se pudo registrar la asistencia.',
-          });
-        }
-      } catch {
+        lastScannedTimeRef.current[extractedDni] = now;
         setLastScannedResult({
-          status: 'error',
-          message: 'Error de conexión al registrar asistencia.',
+          status: 'already',
+          message: `DNI ${extractedDni} ya fue escaneado en esta sesión.`,
+          militante: { nombres: '', apellidos: '', dni: extractedDni },
         });
-      } finally {
+
+        // Pausa brevísima para mostrar feedback
+        isScanningLockedRef.current = true;
+        setScanningLocked(true);
+        if (html5QrCodeRef.current) {
+          try { html5QrCodeRef.current.pause(true); } catch { }
+        }
         setTimeout(() => {
           isScanningLockedRef.current = false;
           setScanningLocked(false);
-          // Reanudar cámara
           if (html5QrCodeRef.current) {
-            try {
-              html5QrCodeRef.current.resume();
-            } catch {}
+            try { html5QrCodeRef.current.resume(); } catch { }
           }
-        }, 2500);
+        }, 800);
+        return;
       }
+
+      // BLOQUEO BREVE para evitar lecturas duplicadas del mismo frame
+      isScanningLockedRef.current = true;
+      setScanningLocked(true);
+      lastScannedTimeRef.current[extractedDni] = Date.now();
+
+      // Pausar cámara brevemente para feedback visual
+      if (html5QrCodeRef.current) {
+        try { html5QrCodeRef.current.pause(true); } catch { }
+      }
+
+      // ★ RESPUESTA OPTIMISTA INSTANTÁNEA — No esperar al servidor
+      playSuccessBeep();
+      processedDnisRef.current.add(extractedDni);
+      setLastScannedResult({
+        status: 'success',
+        message: '¡Lectura Exitosa!',
+        militante: {
+          nombres: '',
+          apellidos: '',
+          dni: extractedDni,
+        },
+      });
+
+      // Incremento optimista del contador
+      setSelectedEvent((prev) =>
+        prev ? { ...prev, total_asistentes: (prev.total_asistentes || 0) + 1 } : null
+      );
+
+      // ★ ENVIAR AL SERVIDOR EN SEGUNDO PLANO (fire-and-forget)
+      processAttendanceInBackground(extractedDni, currentEvent.id_evento);
+
+      // ★ REANUDAR CÁMARA EN 800ms (antes eran 2500ms + tiempo de servidor)
+      setTimeout(() => {
+        isScanningLockedRef.current = false;
+        setScanningLocked(false);
+        if (html5QrCodeRef.current) {
+          try { html5QrCodeRef.current.resume(); } catch { }
+        }
+      }, 800);
     },
-    []
+    [processAttendanceInBackground]
   );
 
   // ---- CONTROLADOR DE ASISTENCIA: BÚSQUEDA MANUAL (MODALIDAD 2) ----
@@ -502,6 +733,88 @@ export default function EventosPage() {
       addToast('error', 'Error de conexión');
     } finally {
       setRegisteringManual(false);
+    }
+  };
+
+  // ---- REGISTRO EN PUERTA DE SIMPATIZANTE NO EMPADRONADO (EN REVISIÓN) ----
+  const handleRegisterNewMilitanteInDoor = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!selectedEvent) return;
+
+    const cleanDni = manualDni.replace(/\D/g, '').trim();
+    if (cleanDni.length !== 8) {
+      addToast('error', 'El DNI debe tener 8 dígitos');
+      return;
+    }
+
+    if (!newDoorMilitante.nombres.trim()) {
+      addToast('error', 'Ingresa los nombres');
+      return;
+    }
+
+    if (!newDoorMilitante.apellidos.trim()) {
+      addToast('error', 'Ingresa los apellidos');
+      return;
+    }
+
+    if (!newDoorMilitante.base.trim()) {
+      addToast('error', 'Ingresa el distrito o base');
+      return;
+    }
+
+    setRegisteringDoorMilitante(true);
+    try {
+      const cleanPhone = newDoorMilitante.telefono.replace(/\D/g, '').trim();
+      const safePhone = cleanPhone ? `+51 ${cleanPhone}` : '+51 900000000';
+
+      const res = await fetch(`/api/eventos/${selectedEvent.id_evento}/asistencia`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          dni: cleanDni,
+          metodo: 'manual',
+          nuevoMilitante: {
+            nombres: newDoorMilitante.nombres.trim().toUpperCase(),
+            apellidos: newDoorMilitante.apellidos.trim().toUpperCase(),
+            telefono: safePhone,
+            base: newDoorMilitante.base.trim(),
+            canal_registro: `Evento: ${selectedEvent.titulo}`,
+          },
+        }),
+      });
+
+      const result = await res.json();
+      if (result.success) {
+        playSuccessBeep();
+        addToast(
+          'success',
+          `¡Asistencia registrada! ${newDoorMilitante.nombres.trim()} guardado(a) en "En Revisión".`
+        );
+
+        setManualDni('');
+        setManualNotFound(false);
+        setNewDoorMilitante({ nombres: '', apellidos: '', telefono: '', base: '' });
+
+        await loadAsistencia(selectedEvent.id_evento, true);
+        setSelectedEvent((prev) =>
+          prev ? { ...prev, total_asistentes: (prev.total_asistentes || 0) + 1 } : null
+        );
+        setEventos((prev) =>
+          prev.map((ev) =>
+            ev.id_evento === selectedEvent.id_evento
+              ? { ...ev, total_asistentes: (ev.total_asistentes || 0) + 1 }
+              : ev
+          )
+        );
+      } else if (result.alreadyMarked) {
+        addToast('warning', result.message || 'Esta persona ya había registrado asistencia');
+      } else {
+        addToast('error', result.error || 'Error al registrar');
+      }
+    } catch {
+      addToast('error', 'Error de conexión');
+    } finally {
+      setRegisteringDoorMilitante(false);
     }
   };
 
@@ -578,11 +891,10 @@ export default function EventosPage() {
                 return (
                   <div
                     key={ev.id_evento}
-                    className={`glass rounded-2xl p-5 border transition-all duration-200 flex flex-col justify-between ${
-                      isActive
+                    className={`glass rounded-2xl p-5 border transition-all duration-200 flex flex-col justify-between ${isActive
                         ? 'border-amber-500/30 hover:border-amber-400/60 glow-accent'
                         : 'border-white/5 opacity-80'
-                    }`}
+                      }`}
                   >
                     <div className="space-y-3">
                       {/* Badge estado y fecha */}
@@ -590,7 +902,35 @@ export default function EventosPage() {
                         <Badge variant={isActive ? 'success' : 'default'} dot>
                           {isActive ? 'Activo' : 'Finalizado'}
                         </Badge>
-                        <span className="text-xs text-slate-400 font-mono">ID: {ev.id_evento}</span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs text-slate-400 font-mono">ID: {ev.id_evento}</span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openEditModal(ev);
+                            }}
+                            className="p-1 rounded-lg bg-surface-800 hover:bg-surface-700 text-slate-400 hover:text-amber-400 border border-white/5 transition-colors cursor-pointer"
+                            title="Editar Evento"
+                          >
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                            </svg>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openDeleteModal(ev);
+                            }}
+                            className="p-1 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 border border-rose-500/20 transition-colors cursor-pointer"
+                            title="Eliminar Evento"
+                          >
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          </button>
+                        </div>
                       </div>
 
                       {/* Título */}
@@ -659,6 +999,36 @@ export default function EventosPage() {
                           className="w-full text-xs text-slate-400 hover:text-white"
                         >
                           {isActive ? 'Finalizar' : 'Reactivar'}
+                        </Button>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2 pt-1 border-t border-white/5">
+                        <Button
+                          onClick={() => openEditModal(ev)}
+                          variant="secondary"
+                          size="sm"
+                          className="w-full text-xs text-amber-300 hover:text-amber-200 border-amber-500/20 hover:border-amber-500/40"
+                          icon={
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                            </svg>
+                          }
+                        >
+                          Editar
+                        </Button>
+
+                        <Button
+                          onClick={() => openDeleteModal(ev)}
+                          variant="ghost"
+                          size="sm"
+                          className="w-full text-xs text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 border border-rose-500/20 hover:border-rose-500/40"
+                          icon={
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          }
+                        >
+                          Eliminar
                         </Button>
                       </div>
                     </div>
@@ -736,6 +1106,34 @@ export default function EventosPage() {
               >
                 Cartel Puerta
               </Button>
+
+              <Button
+                onClick={() => openEditModal(selectedEvent)}
+                variant="secondary"
+                size="sm"
+                className="text-amber-300 hover:text-amber-200 border-amber-500/20"
+                icon={
+                  <svg className="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                  </svg>
+                }
+              >
+                Editar
+              </Button>
+
+              <Button
+                onClick={() => openDeleteModal(selectedEvent)}
+                variant="ghost"
+                size="sm"
+                className="text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 border border-rose-500/20"
+                icon={
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                }
+              >
+                Eliminar
+              </Button>
             </div>
           </div>
 
@@ -746,11 +1144,10 @@ export default function EventosPage() {
                 setActiveTab('scan');
                 setScannerActive(true);
               }}
-              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer whitespace-nowrap ${
-                activeTab === 'scan'
+              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer whitespace-nowrap ${activeTab === 'scan'
                   ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/30'
                   : 'text-slate-400 hover:text-white hover:bg-white/5'
-              }`}
+                }`}
             >
               <span>📷</span>
               <span>Modalidad 1: Escáner Carnets</span>
@@ -762,11 +1159,10 @@ export default function EventosPage() {
                 setScannerActive(false);
                 setActiveTab('manual');
               }}
-              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer whitespace-nowrap ${
-                activeTab === 'manual'
+              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer whitespace-nowrap ${activeTab === 'manual'
                   ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/30'
                   : 'text-slate-400 hover:text-white hover:bg-white/5'
-              }`}
+                }`}
             >
               <span>✍️</span>
               <span>Modalidad 2: Registro Manual</span>
@@ -778,11 +1174,10 @@ export default function EventosPage() {
                 setScannerActive(false);
                 setActiveTab('list');
               }}
-              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer whitespace-nowrap ${
-                activeTab === 'list'
+              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer whitespace-nowrap ${activeTab === 'list'
                   ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/30'
                   : 'text-slate-400 hover:text-white hover:bg-white/5'
-              }`}
+                }`}
             >
               <span>📋</span>
               <span>Lista de Asistentes ({asistentes.length})</span>
@@ -795,10 +1190,10 @@ export default function EventosPage() {
           {activeTab === 'scan' && (
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
               {/* Área del Escáner */}
-              <div className="lg:col-span-2 glass rounded-2xl p-6 border border-white/10 space-y-4">
-                <div className="flex items-center justify-between">
+              <div className="lg:col-span-2 glass rounded-2xl p-3 sm:p-6 border border-white/10 space-y-4">
+                <div className="flex items-center justify-between gap-3">
                   <div>
-                    <h3 className="text-base font-bold text-white">Escáner de Credenciales de Militantes</h3>
+                    <h3 className="text-sm sm:text-base font-bold text-white">Escáner de Credenciales de Militantes</h3>
                     <p className="text-xs text-slate-400">
                       Apunta la cámara al código QR de la credencial digital o física del militante
                     </p>
@@ -820,9 +1215,9 @@ export default function EventosPage() {
                   </Button>
                 </div>
 
-                {/* Contenedor de la Cámara de html5-qrcode */}
-                <div className="relative rounded-2xl overflow-hidden bg-black/80 aspect-video flex flex-col items-center justify-center border border-white/10">
-                  <div id="reader-cam" className="w-full h-full max-h-[360px]" />
+                {/* Contenedor de la Cámara de html5-qrcode adaptado a cualquier celular */}
+                <div className="relative rounded-2xl overflow-hidden bg-black/95 w-full h-[380px] sm:h-[440px] max-w-lg mx-auto flex flex-col items-center justify-center border border-white/10 shadow-2xl">
+                  <div id="reader-cam" className="w-full h-full flex items-center justify-center" />
 
                   {!scannerActive && (
                     <div className="text-center p-6 space-y-3">
@@ -833,6 +1228,15 @@ export default function EventosPage() {
                       <Button onClick={() => setScannerActive(true)} variant="accent" size="sm">
                         Activar Cámara
                       </Button>
+                    </div>
+                  )}
+
+                  {scannerActive && !scanningLocked && (
+                    <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+                      {/* Línea láser de escaneo animada para feedback visual instantáneo */}
+                      <div className="w-[76%] max-w-[280px] aspect-square relative flex items-center justify-center">
+                        <div className="absolute left-2 right-2 h-0.5 bg-gradient-to-r from-transparent via-amber-400 to-transparent shadow-[0_0_12px_#f59e0b] animate-scanner-line" />
+                      </div>
                     </div>
                   )}
 
@@ -850,21 +1254,20 @@ export default function EventosPage() {
                 {/* Feedback del último escaneo */}
                 {lastScannedResult && (
                   <div
-                    className={`p-4 rounded-xl border transition-all ${
-                      lastScannedResult.status === 'success'
+                    className={`p-4 rounded-xl border transition-all ${lastScannedResult.status === 'success'
                         ? 'bg-emerald-500/15 border-emerald-500/30'
                         : lastScannedResult.status === 'already'
-                        ? 'bg-amber-500/15 border-amber-500/30'
-                        : 'bg-red-500/15 border-red-500/30'
-                    }`}
+                          ? 'bg-amber-500/15 border-amber-500/30'
+                          : 'bg-red-500/15 border-red-500/30'
+                      }`}
                   >
                     <div className="flex items-start gap-3">
                       <span className="text-xl leading-none mt-0.5">
                         {lastScannedResult.status === 'success'
                           ? '🎉'
                           : lastScannedResult.status === 'already'
-                          ? '⚠️'
-                          : '✕'}
+                            ? '⚠️'
+                            : '✕'}
                       </span>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-bold text-white leading-tight">
@@ -881,6 +1284,26 @@ export default function EventosPage() {
                         )}
                       </div>
                     </div>
+                  </div>
+                )}
+
+                {/* Indicador de cola de procesamiento en segundo plano */}
+                {(pendingQueue > 0 || processedCount > 0) && (
+                  <div className="flex items-center justify-between p-3 rounded-xl bg-surface-800/80 border border-white/5 text-xs">
+                    <div className="flex items-center gap-2">
+                      {pendingQueue > 0 && (
+                        <span className="flex items-center gap-1.5 text-amber-400 font-semibold">
+                          <div className="w-2 h-2 border-2 border-amber-400/30 border-t-amber-400 rounded-full animate-spin" />
+                          {pendingQueue} procesando...
+                        </span>
+                      )}
+                      {pendingQueue === 0 && processedCount > 0 && (
+                        <span className="text-emerald-400 font-semibold">✓ Todo sincronizado</span>
+                      )}
+                    </div>
+                    <span className="text-slate-400 font-mono">
+                      {processedCount} enviados al servidor
+                    </span>
                   </div>
                 )}
               </div>
@@ -922,8 +1345,8 @@ export default function EventosPage() {
                             {a.metodo === 'qr_puerta'
                               ? '🚪 Puerta'
                               : a.metodo === 'scan_admin'
-                              ? '📷 Escáner'
-                              : '✍️ Manual'}
+                                ? '📷 Escáner'
+                                : '✍️ Manual'}
                           </span>
                         </div>
                       </div>
@@ -1013,13 +1436,152 @@ export default function EventosPage() {
                 </div>
               )}
 
-              {/* DNI No Encontrado */}
+              {/* Botón rápido para inscribir directamente sin buscar primero */}
+              {!manualNotFound && !manualMilitanteResult && (
+                <div className="text-center pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setManualNotFound(true);
+                      setManualMilitanteResult(null);
+                    }}
+                    className="text-xs text-amber-400/90 hover:text-amber-300 underline decoration-amber-400/40 hover:decoration-amber-300 cursor-pointer font-semibold transition-colors"
+                  >
+                    + ¿La persona es nueva y no está empadronada? Inscribir directamente aquí
+                  </button>
+                </div>
+              )}
+
+              {/* DNI No Encontrado -> Formulario de Registro Express en Revisión */}
               {manualNotFound && (
-                <div className="p-4 rounded-xl bg-red-500/15 border border-red-500/30 text-center space-y-2">
-                  <p className="text-sm font-bold text-red-300">DNI no empadronado</p>
-                  <p className="text-xs text-slate-300">
-                    El DNI <strong className="font-mono">{manualDni}</strong> no figura en el padrón oficial de Fuerza Tacna.
-                  </p>
+                <div className="p-5 rounded-2xl bg-amber-500/10 border border-amber-500/30 space-y-4 animate-fade-in shadow-lg">
+                  <div className="flex items-center justify-between pb-3 border-b border-white/10">
+                    <div className="flex items-center gap-2">
+                      <span className="text-2xl">📝</span>
+                      <div>
+                        <h4 className="text-sm font-bold text-amber-300">
+                          {manualDni ? `DNI no empadronado (${manualDni})` : 'Inscripción Express en Puerta'}
+                        </h4>
+                        <p className="text-xs text-slate-400">
+                          Ingresa sus datos para registrarlo en <strong>Revisión</strong> y confirmar su asistencia al evento.
+                        </p>
+                      </div>
+                    </div>
+                    <Badge variant="warning">En Revisión</Badge>
+                  </div>
+
+                  <form onSubmit={handleRegisterNewMilitanteInDoor} className="space-y-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <Input
+                          label="DNI *"
+                          placeholder="Ingresa 8 dígitos"
+                          value={manualDni}
+                          onChange={(e) => setManualDni(e.target.value.replace(/\D/g, '').slice(0, 8))}
+                          maxLength={8}
+                          required
+                          className="font-mono font-bold tracking-wider"
+                        />
+                      </div>
+                      <div>
+                        <Input
+                          label="Teléfono / WhatsApp"
+                          placeholder="Ej: 952123456"
+                          type="tel"
+                          maxLength={9}
+                          value={newDoorMilitante.telefono}
+                          onChange={(e) =>
+                            setNewDoorMilitante({
+                              ...newDoorMilitante,
+                              telefono: e.target.value.replace(/\D/g, '').slice(0, 9),
+                            })
+                          }
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <Input
+                        label="Nombres *"
+                        placeholder="Ej: Juan Carlos"
+                        value={newDoorMilitante.nombres}
+                        onChange={(e) =>
+                          setNewDoorMilitante({
+                            ...newDoorMilitante,
+                            nombres: e.target.value.toUpperCase(),
+                          })
+                        }
+                        required
+                      />
+                      <Input
+                        label="Apellidos *"
+                        placeholder="Ej: Pérez Quispe"
+                        value={newDoorMilitante.apellidos}
+                        onChange={(e) =>
+                          setNewDoorMilitante({
+                            ...newDoorMilitante,
+                            apellidos: e.target.value.toUpperCase(),
+                          })
+                        }
+                        required
+                      />
+                    </div>
+
+                    <div>
+                      <Input
+                        label="Distrito / Base *"
+                        placeholder="Ej: Gregorio Albarracín, Tacna Centro, Pocollay, etc."
+                        value={newDoorMilitante.base}
+                        onChange={(e) =>
+                          setNewDoorMilitante({
+                            ...newDoorMilitante,
+                            base: e.target.value,
+                          })
+                        }
+                        required
+                      />
+                    </div>
+
+                    <div className="p-2.5 rounded-xl bg-surface-900/80 border border-white/5 text-[11px] text-slate-400 space-y-1">
+                      <p>
+                        💡 <strong>Control y Seguridad:</strong> Esta persona quedará guardada en la sección <strong>"🕒 En Revisión"</strong> (no en militantes activos) para que la dirigencia la valide después del evento.
+                      </p>
+                      <p className="text-emerald-400 font-medium">
+                        ✓ Su asistencia a este evento quedará confirmada al instante.
+                      </p>
+                    </div>
+
+                    <div className="flex gap-2 pt-1">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        disabled={registeringDoorMilitante}
+                        onClick={() => {
+                          setManualNotFound(false);
+                          setManualDni('');
+                          setNewDoorMilitante({ nombres: '', apellidos: '', telefono: '', base: '' });
+                        }}
+                        className="flex-1"
+                      >
+                        Cancelar
+                      </Button>
+                      <Button
+                        type="submit"
+                        loading={registeringDoorMilitante}
+                        variant="accent"
+                        size="sm"
+                        className="flex-[2] font-bold"
+                        icon={
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                          </svg>
+                        }
+                      >
+                        {registeringDoorMilitante ? 'Registrando...' : 'Registrar en Revisión y Dar Asistencia'}
+                      </Button>
+                    </div>
+                  </form>
                 </div>
               )}
             </div>
@@ -1091,19 +1653,18 @@ export default function EventosPage() {
                           </td>
                           <td className="px-4 py-3">
                             <span
-                              className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold ${
-                                a.metodo === 'qr_puerta'
+                              className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold ${a.metodo === 'qr_puerta'
                                   ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
                                   : a.metodo === 'scan_admin'
-                                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                                  : 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
-                              }`}
+                                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                                    : 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
+                                }`}
                             >
                               {a.metodo === 'qr_puerta'
                                 ? 'Puerta QR'
                                 : a.metodo === 'scan_admin'
-                                ? 'Escáner Admin'
-                                : 'Manual'}
+                                  ? 'Escáner Admin'
+                                  : 'Manual'}
                             </span>
                           </td>
                         </tr>
@@ -1172,6 +1733,173 @@ export default function EventosPage() {
             </Button>
           </div>
         </form>
+      </Modal>
+
+      {/* ==================================================== */}
+      {/* MODAL: EDITAR EVENTO                                  */}
+      {/* ==================================================== */}
+      <Modal
+        isOpen={editModalOpen}
+        onClose={() => !savingEdit && setEditModalOpen(false)}
+        title="Editar Evento o Reunión"
+        size="md"
+      >
+        {editingEvent && (
+          <form onSubmit={handleSaveEditEvent} className="space-y-4">
+            <Input
+              label="Título de la Reunión o Evento"
+              placeholder="Ej: Gran Caravana Principal - Fuerza Tacna"
+              value={editEventData.titulo}
+              onChange={(e) => setEditEventData({ ...editEventData, titulo: e.target.value })}
+              required
+            />
+
+            <div className="grid grid-cols-2 gap-3">
+              <Input
+                label="Fecha"
+                type="date"
+                value={editEventData.fecha}
+                onChange={(e) => setEditEventData({ ...editEventData, fecha: e.target.value })}
+                required
+              />
+              <Input
+                label="Hora (Opcional)"
+                type="time"
+                value={editEventData.hora}
+                onChange={(e) => setEditEventData({ ...editEventData, hora: e.target.value })}
+              />
+            </div>
+
+            <Input
+              label="Lugar o Dirección"
+              placeholder="Ej: Mercado Cenepa, Tacna"
+              value={editEventData.lugar}
+              onChange={(e) => setEditEventData({ ...editEventData, lugar: e.target.value })}
+            />
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                Estado del Evento
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setEditEventData({ ...editEventData, estado: 'activo' })}
+                  className={`py-2 px-3 rounded-xl text-xs font-bold border transition-all cursor-pointer ${editEventData.estado === 'activo'
+                      ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300'
+                      : 'bg-surface-800 border-white/10 text-slate-400 hover:text-white'
+                    }`}
+                >
+                  🟢 Activo (Abierto)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditEventData({ ...editEventData, estado: 'finalizado' })}
+                  className={`py-2 px-3 rounded-xl text-xs font-bold border transition-all cursor-pointer ${editEventData.estado === 'finalizado'
+                      ? 'bg-amber-500/20 border-amber-500 text-amber-300'
+                      : 'bg-surface-800 border-white/10 text-slate-400 hover:text-white'
+                    }`}
+                >
+                  ⏸️ Finalizado (Cerrado)
+                </button>
+              </div>
+            </div>
+
+            <div className="flex gap-3 pt-2">
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={savingEdit}
+                onClick={() => setEditModalOpen(false)}
+                className="flex-1"
+              >
+                Cancelar
+              </Button>
+              <Button type="submit" loading={savingEdit} variant="accent" className="flex-1">
+                Guardar Cambios
+              </Button>
+            </div>
+          </form>
+        )}
+      </Modal>
+
+      {/* ==================================================== */}
+      {/* MODAL: ADVERTENCIA Y CONFIRMACIÓN DE ELIMINACIÓN      */}
+      {/* ==================================================== */}
+      <Modal
+        isOpen={deleteModalOpen}
+        onClose={() => !deletingEvent && setDeleteModalOpen(false)}
+        title="⚠️ Confirmar Eliminación de Evento"
+        size="md"
+      >
+        {eventToDelete && (
+          <div className="space-y-4">
+            {/* Tarjeta resumen del evento a eliminar */}
+            <div className="p-4 rounded-xl bg-surface-800/80 border border-white/10 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-mono text-slate-400">ID: {eventToDelete.id_evento}</span>
+                <Badge variant={eventToDelete.estado === 'activo' ? 'success' : 'default'} dot>
+                  {eventToDelete.estado === 'activo' ? 'Activo' : 'Finalizado'}
+                </Badge>
+              </div>
+              <h4 className="text-base font-bold text-white">{eventToDelete.titulo}</h4>
+              <div className="text-xs text-slate-300 space-y-1">
+                <p>📅 {formatFecha(eventToDelete.fecha)} {eventToDelete.hora && `| ⏰ ${formatHora(eventToDelete.hora)}`}</p>
+                {eventToDelete.lugar && <p>📍 {eventToDelete.lugar}</p>}
+              </div>
+            </div>
+
+            {/* Advertencia adaptativa según la cantidad de asistentes */}
+            {(eventToDelete.total_asistentes || 0) > 0 ? (
+              <div className="p-4 rounded-xl bg-rose-500/15 border-2 border-rose-500/40 text-rose-200 space-y-2">
+                <div className="flex items-center gap-2 text-rose-400 font-bold text-sm">
+                  <span className="text-lg">🚨</span>
+                  <span>¡ADVERTENCIA CRÍTICA DE ASISTENCIA!</span>
+                </div>
+                <p className="text-xs leading-relaxed">
+                  Este evento cuenta con <strong className="text-white underline font-bold">{eventToDelete.total_asistentes} asistente(s) registrado(s)</strong>.
+                </p>
+                <p className="text-xs leading-relaxed text-rose-300">
+                  Si eliminas este evento, <strong>se borrarán permanentemente tanto el evento como todos los registros de asistencia vinculados</strong> de la base de datos oficial. Esta acción no se puede deshacer.
+                </p>
+              </div>
+            ) : (
+              <div className="p-4 rounded-xl bg-amber-500/15 border-2 border-amber-500/40 text-amber-200 space-y-2">
+                <div className="flex items-center gap-2 text-amber-400 font-bold text-sm">
+                  <span className="text-lg">⚠️</span>
+                  <span>ADVERTENCIA DE ELIMINACIÓN</span>
+                </div>
+                <p className="text-xs leading-relaxed">
+                  Este evento cuenta actualmente con <strong>0 asistentes registrados</strong>.
+                </p>
+                <p className="text-xs leading-relaxed text-amber-300">
+                  ¿Estás completamente seguro de que deseas eliminar este evento? La información será borrada definitivamente de la base de datos.
+                </p>
+              </div>
+            )}
+
+            {/* Botones de acción */}
+            <div className="flex gap-3 pt-2">
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={deletingEvent}
+                onClick={() => setDeleteModalOpen(false)}
+                className="flex-1"
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="button"
+                onClick={handleConfirmDeleteEvent}
+                loading={deletingEvent}
+                className="flex-1 bg-rose-600 hover:bg-rose-500 text-white font-bold border border-rose-400/40 shadow-lg shadow-rose-950/50 cursor-pointer"
+              >
+                {deletingEvent ? 'Eliminando...' : 'Sí, Eliminar Evento'}
+              </Button>
+            </div>
+          </div>
+        )}
       </Modal>
 
       {/* ==================================================== */}

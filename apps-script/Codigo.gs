@@ -360,6 +360,8 @@ function doPost(e) {
         return handleAddEvento(payload);
       case 'updateEvento':
         return handleUpdateEvento(payload);
+      case 'deleteEvento':
+        return handleDeleteEvento(payload);
       case 'marcarAsistencia':
         return handleMarcarAsistencia(payload);
       
@@ -1022,30 +1024,119 @@ function handleAddEvento(payload) {
  * Actualiza el estado o datos de un evento.
  */
 function handleUpdateEvento(payload) {
-  const { id_evento, rowIndex, estado, titulo, fecha, hora, lugar } = payload;
-  const sheet = getSheet(SHEET_EVENTOS);
-  if (!sheet) return jsonResponse({ success: false, error: 'No se encontró la pestaña Eventos' });
-  
-  let targetRow = rowIndex;
-  if (!targetRow && id_evento) {
-    const data = sheet.getDataRange().getValues();
-    for (let i = 1; i < data.length; i++) {
-      if (String(data[i][COL_EV.ID_EVENTO] || '').trim() === String(id_evento).trim()) {
-        targetRow = i + 1;
-        break;
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(15000);
+
+    const { id_evento, rowIndex, estado, titulo, fecha, hora, lugar } = payload;
+    const sheet = getSheet(SHEET_EVENTOS);
+    if (!sheet) return jsonResponse({ success: false, error: 'No se encontró la pestaña Eventos' });
+    
+    let targetRow = rowIndex;
+    let eventId = id_evento;
+
+    if (!targetRow && id_evento) {
+      const data = sheet.getDataRange().getValues();
+      for (let i = 1; i < data.length; i++) {
+        if (String(data[i][COL_EV.ID_EVENTO] || '').trim() === String(id_evento).trim()) {
+          targetRow = i + 1;
+          break;
+        }
       }
     }
+    
+    if (!targetRow) return jsonResponse({ success: false, error: 'Evento no encontrado' });
+    
+    if (estado !== undefined) sheet.getRange(targetRow, COL_EV.ESTADO + 1).setValue(String(estado).toLowerCase().trim());
+    if (titulo !== undefined) sheet.getRange(targetRow, COL_EV.TITULO + 1).setValue(String(titulo).trim());
+    if (fecha !== undefined) sheet.getRange(targetRow, COL_EV.FECHA + 1).setValue(String(fecha).trim());
+    if (hora !== undefined) sheet.getRange(targetRow, COL_EV.HORA + 1).setValue(String(hora).trim());
+    if (lugar !== undefined) sheet.getRange(targetRow, COL_EV.LUGAR + 1).setValue(String(lugar).trim());
+    
+    // Si se actualizó el título, actualizar también el título en las filas de Asistencia asociadas
+    if (titulo !== undefined && eventId) {
+      const sheetAsist = getSheet(SHEET_ASISTENCIA);
+      if (sheetAsist && sheetAsist.getLastRow() > 1) {
+        const dataAsist = sheetAsist.getDataRange().getValues();
+        for (let j = 1; j < dataAsist.length; j++) {
+          if (String(dataAsist[j][COL_AS.ID_EVENTO] || '').trim() === String(eventId).trim()) {
+            sheetAsist.getRange(j + 1, COL_AS.TITULO_EVENTO + 1).setValue(String(titulo).trim());
+          }
+        }
+      }
+    }
+
+    return jsonResponse({ success: true, message: 'Evento actualizado correctamente' });
+  } catch(err) {
+    return jsonResponse({ success: false, error: 'Error al actualizar evento: ' + err.toString() });
+  } finally {
+    try { lock.releaseLock(); } catch(e) {}
   }
-  
-  if (!targetRow) return jsonResponse({ success: false, error: 'Evento no encontrado' });
-  
-  if (estado !== undefined) sheet.getRange(targetRow, COL_EV.ESTADO + 1).setValue(String(estado).toLowerCase().trim());
-  if (titulo !== undefined) sheet.getRange(targetRow, COL_EV.TITULO + 1).setValue(String(titulo).trim());
-  if (fecha !== undefined) sheet.getRange(targetRow, COL_EV.FECHA + 1).setValue(String(fecha).trim());
-  if (hora !== undefined) sheet.getRange(targetRow, COL_EV.HORA + 1).setValue(String(hora).trim());
-  if (lugar !== undefined) sheet.getRange(targetRow, COL_EV.LUGAR + 1).setValue(String(lugar).trim());
-  
-  return jsonResponse({ success: true, message: 'Evento actualizado correctamente' });
+}
+
+/**
+ * Elimina un evento y todas sus asistencias asociadas de la base de datos.
+ */
+function handleDeleteEvento(payload) {
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(15000);
+
+    const { id_evento, rowIndex } = payload;
+    const sheetEventos = getSheet(SHEET_EVENTOS);
+    if (!sheetEventos) return jsonResponse({ success: false, error: 'No se encontró la pestaña Eventos' });
+    
+    let targetRow = rowIndex;
+    let eventId = id_evento;
+
+    const dataEv = sheetEventos.getDataRange().getValues();
+    if (!targetRow && id_evento) {
+      for (let i = 1; i < dataEv.length; i++) {
+        if (String(dataEv[i][COL_EV.ID_EVENTO] || '').trim() === String(id_evento).trim()) {
+          targetRow = i + 1;
+          break;
+        }
+      }
+    } else if (targetRow && !eventId) {
+      if (targetRow <= dataEv.length) {
+        eventId = String(dataEv[targetRow - 1][COL_EV.ID_EVENTO] || '').trim();
+      }
+    }
+
+    if (!targetRow || targetRow > sheetEventos.getLastRow()) {
+      return jsonResponse({ success: false, error: 'Evento no encontrado' });
+    }
+
+    // 1. Eliminar la fila del evento en la hoja Eventos
+    sheetEventos.deleteRow(targetRow);
+
+    // 2. Eliminar todas las asistencias asociadas a este evento en la hoja Asistencia
+    let asistenciasEliminadas = 0;
+    if (eventId) {
+      const sheetAsist = getSheet(SHEET_ASISTENCIA);
+      if (sheetAsist && sheetAsist.getLastRow() > 1) {
+        const dataAsist = sheetAsist.getDataRange().getValues();
+        // Recorrer de abajo hacia arriba para que los índices no se desfasen
+        for (let j = dataAsist.length - 1; j >= 1; j--) {
+          const rowEvId = String(dataAsist[j][COL_AS.ID_EVENTO] || '').trim();
+          if (rowEvId === String(eventId).trim()) {
+            sheetAsist.deleteRow(j + 1);
+            asistenciasEliminadas++;
+          }
+        }
+      }
+    }
+
+    return jsonResponse({
+      success: true,
+      message: 'Evento eliminado correctamente' + (asistenciasEliminadas > 0 ? ` junto a sus ${asistenciasEliminadas} registro(s) de asistencia.` : '.'),
+      asistenciasEliminadas: asistenciasEliminadas
+    });
+  } catch(err) {
+    return jsonResponse({ success: false, error: 'Error al eliminar evento: ' + err.toString() });
+  } finally {
+    try { lock.releaseLock(); } catch(e) {}
+  }
 }
 
 /**

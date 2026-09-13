@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth';
-import { getEventoById, updateEvento } from '@/lib/google-sheets';
+import { getEventoById, updateEvento, deleteEvento } from '@/lib/google-sheets';
 
 export async function GET(
   _request: NextRequest,
@@ -61,3 +61,36 @@ export async function PATCH(
     );
   }
 }
+
+export async function DELETE(
+  _request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const session = await getSession();
+    if (!session) {
+      return NextResponse.json(
+        { success: false, error: 'No autorizado' },
+        { status: 401 }
+      );
+    }
+
+    const { id } = await params;
+    if (!id) {
+      return NextResponse.json(
+        { success: false, error: 'ID de evento requerido' },
+        { status: 400 }
+      );
+    }
+
+    const result = await deleteEvento(id);
+    return NextResponse.json(result);
+  } catch (error) {
+    console.error('Error deleting evento:', error);
+    return NextResponse.json(
+      { success: false, error: 'Error al eliminar evento' },
+      { status: 500 }
+    );
+  }
+}
+

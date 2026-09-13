@@ -36,6 +36,16 @@ export default function EventoPuertaPage({ params }: { params: Promise<{ id: str
   const [resultState, setResultState] = useState<'idle' | 'success' | 'already' | 'not_found'>('idle');
   const [asistenciaData, setAsistenciaData] = useState<AsistenciaResult | null>(null);
 
+  // Formulario de Registro Express en Puerta (para quienes no figuran en el padrón)
+  const [doorRegisterForm, setDoorRegisterForm] = useState({
+    nombres: '',
+    apellidos: '',
+    telefono: '',
+    base: '',
+  });
+  const [submittingDoorRegister, setSubmittingDoorRegister] = useState(false);
+  const [doorRegisterError, setDoorRegisterError] = useState<string | null>(null);
+
   const fetchEvento = async () => {
     setLoadingEvento(true);
     setEventoError(null);
@@ -108,6 +118,69 @@ export default function EventoPuertaPage({ params }: { params: Promise<{ id: str
     setResultState('idle');
     setAsistenciaData(null);
     setErrorMsg(null);
+    setDoorRegisterForm({ nombres: '', apellidos: '', telefono: '', base: '' });
+    setDoorRegisterError(null);
+  };
+
+  const handleRegisterDoorMilitante = async (e: FormEvent) => {
+    e.preventDefault();
+    if (submittingDoorRegister) return;
+
+    const cleanDni = dni.replace(/\D/g, '').trim();
+    if (cleanDni.length !== 8) {
+      setDoorRegisterError('El DNI debe tener 8 dígitos');
+      return;
+    }
+
+    if (!doorRegisterForm.nombres.trim() || !doorRegisterForm.apellidos.trim()) {
+      setDoorRegisterError('Ingresa tus nombres y apellidos');
+      return;
+    }
+
+    if (!doorRegisterForm.base.trim()) {
+      setDoorRegisterError('Ingresa tu distrito o base');
+      return;
+    }
+
+    setSubmittingDoorRegister(true);
+    setDoorRegisterError(null);
+
+    try {
+      const cleanPhone = doorRegisterForm.telefono.replace(/\D/g, '').trim();
+      const safePhone = cleanPhone ? `+51 ${cleanPhone}` : '+51 900000000';
+
+      const res = await fetch(`/api/eventos/${eventoId}/asistencia`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          dni: cleanDni,
+          metodo: 'qr_puerta',
+          nuevoMilitante: {
+            nombres: doorRegisterForm.nombres.trim().toUpperCase(),
+            apellidos: doorRegisterForm.apellidos.trim().toUpperCase(),
+            telefono: safePhone,
+            base: doorRegisterForm.base.trim(),
+            canal_registro: 'Evento: Puerta QR',
+          },
+        }),
+      });
+
+      const result = await res.json();
+      if (result.success && result.data) {
+        setAsistenciaData(result.data);
+        setResultState('success');
+      } else if (result.alreadyMarked) {
+        setAsistenciaData(result.data || { dni: cleanDni, nombres: doorRegisterForm.nombres, apellidos: doorRegisterForm.apellidos });
+        setErrorMsg(result.message || 'Ya habías registrado tu asistencia a este evento');
+        setResultState('already');
+      } else {
+        setDoorRegisterError(result.error || 'No se pudo completar el registro');
+      }
+    } catch {
+      setDoorRegisterError('Error de conexión. Verifica tu internet e intenta de nuevo.');
+    } finally {
+      setSubmittingDoorRegister(false);
+    }
   };
 
   return (
@@ -312,37 +385,117 @@ export default function EventoPuertaPage({ params }: { params: Promise<{ id: str
               </div>
             )}
 
-            {/* ESTADO NO ENCONTRADO EN PADRÓN */}
+            {/* ESTADO NO ENCONTRADO EN PADRÓN -> FORMULARIO DIRECTO EN PUERTA */}
             {resultState === 'not_found' && (
-              <div className="glass rounded-2xl p-6 text-center border border-red-500/30 space-y-4">
-                <div className="w-14 h-14 rounded-full bg-red-500/20 text-red-400 flex items-center justify-center mx-auto text-2xl">
-                  ✕
-                </div>
-
-                <div>
-                  <h3 className="text-lg font-bold text-white">DNI no empadronado</h3>
-                  <p className="text-xs text-slate-400 mt-1 leading-relaxed">
-                    El DNI <strong className="text-white font-mono">{dni}</strong> no figura en el padrón oficial de Fuerza Tacna.
+              <div className="glass rounded-2xl p-6 border border-amber-500/30 space-y-4 glow-accent animate-fade-in">
+                <div className="text-center space-y-1">
+                  <div className="w-12 h-12 rounded-xl bg-amber-500/15 text-amber-400 flex items-center justify-center mx-auto text-xl font-bold">
+                    📝
+                  </div>
+                  <h3 className="text-base font-bold text-white">No figuras en el padrón aún</h3>
+                  <p className="text-xs text-slate-300">
+                    Completa tus datos para confirmar tu asistencia e ingresar al evento:
                   </p>
                 </div>
 
-                <div className="p-3.5 rounded-xl bg-surface-800/80 border border-white/5 text-xs text-slate-300 text-left space-y-2">
-                  <p>💡 <strong>¿Qué debes hacer?</strong></p>
-                  <p>
-                    Para registrar tu asistencia primero debes inscribirte en el padrón oficial. Solo te tomará 1 minuto.
-                  </p>
-                </div>
+                <form onSubmit={handleRegisterDoorMilitante} className="space-y-3">
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <div>
+                      <Input
+                        label="DNI"
+                        value={dni}
+                        disabled
+                        className="font-mono bg-surface-900/60 text-slate-400 font-bold text-center"
+                      />
+                    </div>
+                    <div>
+                      <Input
+                        label="WhatsApp / Celular"
+                        placeholder="Ej: 952123456"
+                        type="tel"
+                        maxLength={9}
+                        value={doorRegisterForm.telefono}
+                        onChange={(e) =>
+                          setDoorRegisterForm({
+                            ...doorRegisterForm,
+                            telefono: e.target.value.replace(/\D/g, '').slice(0, 9),
+                          })
+                        }
+                      />
+                    </div>
+                  </div>
 
-                <div className="space-y-2 pt-1">
-                  <Link href="/registro">
-                    <Button variant="accent" className="w-full">
-                      Inscribirme en el Padrón Ahora
+                  <Input
+                    label="Nombres *"
+                    placeholder="Ej: Carlos Alberto"
+                    value={doorRegisterForm.nombres}
+                    onChange={(e) =>
+                      setDoorRegisterForm({
+                        ...doorRegisterForm,
+                        nombres: e.target.value.toUpperCase(),
+                      })
+                    }
+                    required
+                  />
+
+                  <Input
+                    label="Apellidos *"
+                    placeholder="Ej: Mamani Flores"
+                    value={doorRegisterForm.apellidos}
+                    onChange={(e) =>
+                      setDoorRegisterForm({
+                        ...doorRegisterForm,
+                        apellidos: e.target.value.toUpperCase(),
+                      })
+                    }
+                    required
+                  />
+
+                  <Input
+                    label="Distrito / Base *"
+                    placeholder="Ej: Gregorio Albarracín, Tacna Centro, Pocollay, etc."
+                    value={doorRegisterForm.base}
+                    onChange={(e) =>
+                      setDoorRegisterForm({
+                        ...doorRegisterForm,
+                        base: e.target.value,
+                      })
+                    }
+                    required
+                  />
+
+                  {doorRegisterError && (
+                    <p className="text-xs text-rose-400 bg-rose-500/10 p-2.5 rounded-xl border border-rose-500/20 text-center">
+                      {doorRegisterError}
+                    </p>
+                  )}
+
+                  <div className="pt-2 space-y-2">
+                    <Button
+                      type="submit"
+                      variant="accent"
+                      size="lg"
+                      loading={submittingDoorRegister}
+                      className="w-full font-bold shadow-lg shadow-amber-500/20"
+                      icon={
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                        </svg>
+                      }
+                    >
+                      {submittingDoorRegister ? 'Registrando Asistencia...' : 'Confirmar Asistencia e Ingresar'}
                     </Button>
-                  </Link>
-                  <Button onClick={handleReset} variant="ghost" className="w-full text-slate-400 text-xs">
-                    Intentar con otro DNI
-                  </Button>
-                </div>
+
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={handleReset}
+                      className="w-full text-xs text-slate-400 hover:text-white"
+                    >
+                      ← Probar con otro DNI
+                    </Button>
+                  </div>
+                </form>
               </div>
             )}
           </>

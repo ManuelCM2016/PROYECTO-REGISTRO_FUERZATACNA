@@ -111,3 +111,40 @@ export function formatFechaHora(value: unknown): string {
   // Quitar cualquier "GMT-0500 (hora estándar de Perú)"
   return str.replace(/\s*GMT[+-]\d{4}.*$/, '').trim();
 }
+
+/**
+ * Normaliza cualquier fecha a formato "YYYY-MM-DD" para inputs HTML type="date"
+ */
+export function formatFechaParaInput(value: unknown): string {
+  if (!value) return '';
+  const str = String(value).trim();
+
+  // Si ya es YYYY-MM-DD
+  const ymdMatch = str.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (ymdMatch) {
+    return `${ymdMatch[1]}-${ymdMatch[2]}-${ymdMatch[3]}`;
+  }
+
+  // Si es DD/MM/YYYY
+  const dmyMatch = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (dmyMatch) {
+    const day = dmyMatch[1].padStart(2, '0');
+    const month = dmyMatch[2].padStart(2, '0');
+    const year = dmyMatch[3];
+    return `${year}-${month}-${day}`;
+  }
+
+  // Si es un objeto o cadena parseable por Date
+  const d = new Date(str);
+  if (!isNaN(d.getTime())) {
+    const year = d.getFullYear();
+    if (year > 1970) {
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    }
+  }
+
+  return '';
+}
+
