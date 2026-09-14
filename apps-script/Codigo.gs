@@ -1,19 +1,26 @@
 /**
  * =====================================================
- * BD_FUERZATACNA_REGISTRO - Google Apps Script (v2.3)
+ * BD_FUERZATACNA_REGISTRO - Google Apps Script (v3.0)
  * =====================================================
  * Este código debe copiarse en el editor de Apps Script
  * vinculado a la hoja de cálculo BD_BASE_FUERZA_TACNA.
  * 
+ * Novedades v3.0:
+ * - Sistema completo de Apoyada / Pollada:
+ *   * Registro de apoyadas (CRUD con pestañas Polladas y Tickets_Pollada).
+ *   * Registro de compras de tickets por coordinadores de base.
+ *   * Verificación digital en puerta (reemplaza sello físico).
+ *   * Registro de entrega en cocina con validación secuencial.
+ *   * Prevención de fraude: doble verificación, doble entrega.
+ *   * Estadísticas en tiempo real: vendidos, recaudado, entregados.
+ * - Helpers de fecha/hora: cleanSheetDate, cleanSheetTime, cleanSheetDateTime.
+ * - Pestañas auto-creadas: Polladas y Tickets_Pollada.
+ * 
  * Novedades v2.3:
  * - Soporte integral para Gestión de Eventos y Reuniones (Pestaña 'Eventos').
- * - Control de Asistencia Multimodal (Pestaña 'Asistencia'):
- *   * Modalidad 1: Escaneo de carnet de militante por administrador (scan_admin).
- *   * Modalidad 2: Registro manual por DNI/nombre en panel (manual).
- *   * Modalidad 3: Auto-registro en puerta con cartel QR y DNI (qr_puerta).
+ * - Control de Asistencia Multimodal (Pestaña 'Asistencia').
  * - Auto-creación automática de pestañas 'Eventos' y 'Asistencia' con cabeceras.
  * - Prevención estricta de duplicados de asistencia por evento y DNI.
- * - Protección contra #ERROR! forzando texto plano (@ y apóstrofe inicial).
  * 
  * IMPORTANTE PARA PUBLICAR:
  * 1. Clic en "Implementar" > "Administrar implementaciones"
@@ -29,6 +36,8 @@ const SHEET_MILITANTES = 'Base_Militantes';
 const SHEET_USUARIOS = 'Usuarios_Sistema';
 const SHEET_EVENTOS = 'Eventos';
 const SHEET_ASISTENCIA = 'Asistencia';
+const SHEET_POLLADAS = 'Polladas';
+const SHEET_TICKETS_POLLADA = 'Tickets_Pollada';
 
 // Columnas Base_Militantes (0-indexed)
 const COL_M = {
@@ -75,6 +84,39 @@ const COL_AS = {
   TELEFONO: 7,        // H
   FECHA_HORA: 8,      // I
   METODO: 9           // J (qr_puerta | scan_admin | manual)
+};
+
+// Columnas Polladas (0-indexed)
+const COL_PO = {
+  ID_POLLADA: 0,          // A
+  TITULO: 1,              // B
+  FECHA: 2,               // C
+  HORA: 3,                // D
+  LUGAR: 4,               // E
+  PRECIO_TICKET: 5,       // F
+  MIN_TICKETS: 6,         // G
+  ESTADO: 7,              // H (activo|venta|recojo|finalizado)
+  CREADO_EN: 8            // I
+};
+
+// Columnas Tickets_Pollada (0-indexed)
+const COL_TK = {
+  ID_COMPRA: 0,           // A
+  ID_POLLADA: 1,          // B
+  TITULO_POLLADA: 2,      // C
+  DNI: 3,                 // D
+  NOMBRES: 4,             // E
+  APELLIDOS: 5,           // F
+  BASE: 6,                // G
+  CANTIDAD_TICKETS: 7,    // H
+  NUM_TICKET_INICIO: 8,   // I
+  NUM_TICKET_FIN: 9,      // J
+  MONTO_PAGADO: 10,       // K
+  ESTADO: 11,             // L (comprado|verificado|entregado|cancelado)
+  REGISTRADO_POR: 12,     // M
+  FECHA_COMPRA: 13,       // N
+  FECHA_VERIFICACION: 14, // O
+  FECHA_ENTREGA: 15       // P
 };
 
 // ============ HELPERS ============
@@ -136,6 +178,18 @@ function getSheet(name) {
   if (cleanTarget.includes('asistencia')) {
     const newSheet = ss.insertSheet('Asistencia');
     newSheet.appendRow(['ID_ASISTENCIA', 'ID_EVENTO', 'TITULO_EVENTO', 'DNI', 'NOMBRES', 'APELLIDOS', 'BASE', 'TELEFONO', 'FECHA_HORA', 'METODO']);
+    return newSheet;
+  }
+
+  if (cleanTarget.includes('pollada') && !cleanTarget.includes('ticket')) {
+    const newSheet = ss.insertSheet('Polladas');
+    newSheet.appendRow(['ID_POLLADA', 'TITULO', 'FECHA', 'HORA', 'LUGAR', 'PRECIO_TICKET', 'MIN_TICKETS', 'ESTADO', 'CREADO_EN']);
+    return newSheet;
+  }
+
+  if (cleanTarget.includes('ticket') && cleanTarget.includes('pollada')) {
+    const newSheet = ss.insertSheet('Tickets_Pollada');
+    newSheet.appendRow(['ID_COMPRA', 'ID_POLLADA', 'TITULO_POLLADA', 'DNI', 'NOMBRES', 'APELLIDOS', 'BASE', 'CANTIDAD_TICKETS', 'NUM_TICKET_INICIO', 'NUM_TICKET_FIN', 'MONTO_PAGADO', 'ESTADO', 'REGISTRADO_POR', 'FECHA_COMPRA', 'FECHA_VERIFICACION', 'FECHA_ENTREGA']);
     return newSheet;
   }
   
@@ -283,7 +337,16 @@ function cleanSheetDateTime(val) {
 
 function doGet(e) {
   try {
-    const action = e.parameter.action;
+    const params = (e && e.parameter) ? e.parameter : {};
+    const action = params.action;
+    
+    if (!action) {
+      return jsonResponse({ 
+        success: true, 
+        message: 'API activa de Fuerza Tacna v2.3', 
+        timestamp: new Date().toISOString() 
+      });
+    }
     
     switch(action) {
       case 'ping':
@@ -295,13 +358,13 @@ function doGet(e) {
       
       // Militantes
       case 'getMilitantes':
-        return handleGetMilitantes(e.parameter);
+        return handleGetMilitantes(params);
       case 'findByPhone':
-        return handleFindByPhone(e.parameter.telefono);
+        return handleFindByPhone(params.telefono);
       case 'checkDni':
-        return handleCheckDni(e.parameter.dni);
+        return handleCheckDni(params.dni);
       case 'searchMilitantes':
-        return handleSearchMilitantes(e.parameter.q);
+        return handleSearchMilitantes(params.q);
       case 'getStats':
         return handleGetStats();
       case 'repairErrors':
@@ -311,17 +374,36 @@ function doGet(e) {
       case 'getUsuarios':
         return handleGetUsuarios();
       case 'findUsuario':
-        return handleFindUsuario(e.parameter.username);
+        return handleFindUsuario(params.username);
       
       // Eventos y Asistencia (v2.3)
       case 'getEventos':
         return handleGetEventos();
       case 'getEventoById':
-        return handleGetEventoById(e.parameter.id_evento);
+        return handleGetEventoById(params.id_evento);
       case 'getAsistencia':
-        return handleGetAsistencia(e.parameter.id_evento);
+        return handleGetAsistencia(params.id_evento);
       case 'checkAsistencia':
-        return handleCheckAsistencia(e.parameter.id_evento, e.parameter.dni);
+        return handleCheckAsistencia(params.id_evento, params.dni);
+      case 'marcarAsistencia':
+        if (params.id_evento && params.dni) {
+          return handleMarcarAsistencia({
+            id_evento: params.id_evento,
+            dni: params.dni,
+            metodo: params.metodo || 'qr_puerta'
+          });
+        }
+        return jsonResponse({ success: false, error: 'id_evento y dni requeridos para marcar asistencia' });
+      
+      // Apoyada / Pollada (v3.0)
+      case 'getPolladas':
+        return handleGetPolladas();
+      case 'getPolladaById':
+        return handleGetPolladaById(params.id_pollada);
+      case 'getTicketsPollada':
+        return handleGetTicketsPollada(params.id_pollada);
+      case 'checkTicketPollada':
+        return handleCheckTicketPollada(params.id_pollada, params.dni);
       
       default:
         return jsonResponse({ success: false, error: 'Acción GET no válida: ' + action });
@@ -364,6 +446,22 @@ function doPost(e) {
         return handleDeleteEvento(payload);
       case 'marcarAsistencia':
         return handleMarcarAsistencia(payload);
+      
+      // Apoyada / Pollada (v3.0)
+      case 'addPollada':
+        return handleAddPollada(payload);
+      case 'updatePollada':
+        return handleUpdatePollada(payload);
+      case 'deletePollada':
+        return handleDeletePollada(payload);
+      case 'registrarCompra':
+        return handleRegistrarCompra(payload);
+      case 'verificarTicket':
+        return handleVerificarTicket(payload);
+      case 'registrarEntrega':
+        return handleRegistrarEntrega(payload);
+      case 'cancelarCompra':
+        return handleCancelarCompra(payload);
       
       default:
         return jsonResponse({ success: false, error: 'Acción POST no válida: ' + action });
@@ -875,6 +973,65 @@ function handleDeleteUsuario(payload) {
   
   sheet.deleteRow(rowIndex);
   return jsonResponse({ success: true, message: 'Usuario eliminado correctamente' });
+}
+
+// ============ HELPERS DE FECHA/HORA ============
+
+/**
+ * Limpia y normaliza una fecha proveniente de Google Sheets a formato "YYYY-MM-DD".
+ */
+function cleanSheetDate(value) {
+  if (!value) return '';
+  if (value instanceof Date) {
+    if (isNaN(value.getTime())) return '';
+    var y = value.getFullYear();
+    if (y < 1970) return '';
+    return y + '-' + String(value.getMonth()+1).padStart(2,'0') + '-' + String(value.getDate()).padStart(2,'0');
+  }
+  var str = String(value).trim();
+  var ymd = str.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (ymd) return ymd[1]+'-'+ymd[2]+'-'+ymd[3];
+  var dmy = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (dmy) return dmy[3]+'-'+dmy[2].padStart(2,'0')+'-'+dmy[1].padStart(2,'0');
+  try {
+    var dt = new Date(str);
+    if (!isNaN(dt.getTime()) && dt.getFullYear() > 1970) {
+      return dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0')+'-'+String(dt.getDate()).padStart(2,'0');
+    }
+  } catch(e) {}
+  return str;
+}
+
+/**
+ * Limpia y normaliza una hora proveniente de Google Sheets a "HH:mm".
+ */
+function cleanSheetTime(value) {
+  if (!value) return '';
+  if (value instanceof Date) {
+    if (isNaN(value.getTime())) return '';
+    return String(value.getHours()).padStart(2,'0')+':'+String(value.getMinutes()).padStart(2,'0');
+  }
+  var str = String(value).trim();
+  var m = str.match(/(\d{1,2}):(\d{2})/);
+  if (m) return m[1].padStart(2,'0')+':'+m[2];
+  return '';
+}
+
+/**
+ * Limpia y normaliza un datetime proveniente de Google Sheets a "YYYY-MM-DD HH:mm:ss".
+ */
+function cleanSheetDateTime(value) {
+  if (!value) return '';
+  var str = String(value).trim();
+  if (str.charAt(0) === "'") str = str.slice(1);
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(str)) return str;
+  if (value instanceof Date) {
+    if (isNaN(value.getTime())) return '';
+    try {
+      return Utilities.formatDate(value, Session.getScriptTimeZone() || 'America/Lima', 'yyyy-MM-dd HH:mm:ss');
+    } catch(e) { return str; }
+  }
+  return str;
 }
 
 // ============ EVENTOS Y ASISTENCIA (v2.3) ============
@@ -1397,5 +1554,668 @@ function handleMarcarAsistencia(payload) {
     try {
       lock.releaseLock();
     } catch(e) {}
+  }
+}
+
+// ============ APOYADA / POLLADA (v3.0) ============
+
+/**
+ * Lista todas las polladas/apoyadas registradas.
+ */
+function handleGetPolladas() {
+  try {
+    const sheet = getSheet(SHEET_POLLADAS);
+    if (!sheet) return jsonResponse({ success: false, error: 'No se encontró la pestaña Polladas' });
+
+    const data = sheet.getDataRange().getValues();
+    const polladas = [];
+
+    // Obtener estadísticas de tickets para cada pollada
+    const sheetTK = getSheet(SHEET_TICKETS_POLLADA);
+    const tkData = sheetTK ? sheetTK.getDataRange().getValues() : [];
+
+    for (let i = 1; i < data.length; i++) {
+      const row = data[i];
+      const id = String(row[COL_PO.ID_POLLADA] || '').trim();
+      if (!id) continue;
+
+      // Calcular estadísticas
+      let totalTickets = 0, totalRecaudado = 0, totalEntregados = 0;
+      for (let j = 1; j < tkData.length; j++) {
+        const tkRow = tkData[j];
+        if (String(tkRow[COL_TK.ID_POLLADA] || '').trim() === id) {
+          const estado = String(tkRow[COL_TK.ESTADO] || '').toLowerCase();
+          if (estado !== 'cancelado') {
+            const cant = parseInt(tkRow[COL_TK.CANTIDAD_TICKETS] || '0', 10);
+            totalTickets += cant;
+            totalRecaudado += parseFloat(tkRow[COL_TK.MONTO_PAGADO] || '0');
+          }
+          if (estado === 'entregado') {
+            totalEntregados += parseInt(tkRow[COL_TK.CANTIDAD_TICKETS] || '0', 10);
+          }
+        }
+      }
+
+      polladas.push({
+        rowIndex: i + 1,
+        id_pollada: id,
+        titulo: String(row[COL_PO.TITULO] || '').trim(),
+        fecha: String(row[COL_PO.FECHA] || '').trim(),
+        hora: String(row[COL_PO.HORA] || '').trim(),
+        lugar: String(row[COL_PO.LUGAR] || '').trim(),
+        precio_ticket: parseFloat(row[COL_PO.PRECIO_TICKET] || '16'),
+        min_tickets: parseInt(row[COL_PO.MIN_TICKETS] || '2', 10),
+        estado: String(row[COL_PO.ESTADO] || 'activo').trim().toLowerCase(),
+        creado_en: cleanSheetDateTime(row[COL_PO.CREADO_EN]),
+        total_tickets_vendidos: totalTickets,
+        total_recaudado: totalRecaudado,
+        total_entregados: totalEntregados
+      });
+    }
+
+    polladas.reverse();
+    return jsonResponse({ success: true, data: polladas, total: polladas.length });
+  } catch(err) {
+    return jsonResponse({ success: false, error: err.toString() });
+  }
+}
+
+/**
+ * Obtiene una pollada por ID.
+ */
+function handleGetPolladaById(id_pollada) {
+  try {
+    if (!id_pollada) return jsonResponse({ success: false, error: 'id_pollada requerido' });
+    const sheet = getSheet(SHEET_POLLADAS);
+    if (!sheet) return jsonResponse({ success: false, error: 'No se encontró la pestaña Polladas' });
+
+    const data = sheet.getDataRange().getValues();
+    for (let i = 1; i < data.length; i++) {
+      const row = data[i];
+      if (String(row[COL_PO.ID_POLLADA] || '').trim() === String(id_pollada).trim()) {
+        return jsonResponse({
+          success: true,
+          data: {
+            rowIndex: i + 1,
+            id_pollada: String(row[COL_PO.ID_POLLADA] || '').trim(),
+            titulo: String(row[COL_PO.TITULO] || '').trim(),
+            fecha: String(row[COL_PO.FECHA] || '').trim(),
+            hora: String(row[COL_PO.HORA] || '').trim(),
+            lugar: String(row[COL_PO.LUGAR] || '').trim(),
+            precio_ticket: parseFloat(row[COL_PO.PRECIO_TICKET] || '16'),
+            min_tickets: parseInt(row[COL_PO.MIN_TICKETS] || '2', 10),
+            estado: String(row[COL_PO.ESTADO] || 'activo').trim().toLowerCase(),
+            creado_en: cleanSheetDateTime(row[COL_PO.CREADO_EN])
+          }
+        });
+      }
+    }
+    return jsonResponse({ success: false, error: 'Pollada no encontrada' });
+  } catch(err) {
+    return jsonResponse({ success: false, error: err.toString() });
+  }
+}
+
+/**
+ * Crea una nueva pollada/apoyada.
+ */
+function handleAddPollada(payload) {
+  try {
+    const { titulo, fecha, hora, lugar, precio_ticket, min_tickets } = payload;
+    if (!titulo || !fecha) return jsonResponse({ success: false, error: 'Título y fecha son requeridos' });
+
+    const sheet = getSheet(SHEET_POLLADAS);
+    if (!sheet) return jsonResponse({ success: false, error: 'No se encontró la pestaña Polladas' });
+
+    const idPollada = 'APO-' + new Date().getTime().toString(36).toUpperCase();
+    const nowStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone() || 'America/Lima', 'yyyy-MM-dd HH:mm:ss');
+    const precioFinal = parseFloat(precio_ticket || '16') || 16;
+    const minFinal = parseInt(min_tickets || '2', 10) || 2;
+
+    const newRow = [
+      idPollada,
+      String(titulo).trim().toUpperCase(),
+      String(fecha).trim(),
+      String(hora || '').trim(),
+      String(lugar || '').trim(),
+      precioFinal,
+      minFinal,
+      'activo',
+      "'" + nowStr
+    ];
+
+    sheet.appendRow(newRow);
+    const newRowIndex = sheet.getLastRow();
+    sheet.getRange(newRowIndex, COL_PO.CREADO_EN + 1).setNumberFormat('@');
+
+    return jsonResponse({
+      success: true,
+      message: 'Apoyada creada exitosamente',
+      data: {
+        id_pollada: idPollada,
+        titulo: titulo.trim().toUpperCase(),
+        fecha,
+        hora: hora || '',
+        lugar: lugar || '',
+        precio_ticket: precioFinal,
+        min_tickets: minFinal,
+        estado: 'activo',
+        creado_en: nowStr,
+        rowIndex: newRowIndex
+      }
+    });
+  } catch(err) {
+    return jsonResponse({ success: false, error: err.toString() });
+  }
+}
+
+/**
+ * Actualiza una pollada existente.
+ */
+function handleUpdatePollada(payload) {
+  try {
+    const { id_pollada, rowIndex, titulo, fecha, hora, lugar, precio_ticket, min_tickets, estado } = payload;
+    if (!id_pollada) return jsonResponse({ success: false, error: 'id_pollada requerido' });
+
+    const sheet = getSheet(SHEET_POLLADAS);
+    if (!sheet) return jsonResponse({ success: false, error: 'No se encontró la pestaña Polladas' });
+
+    let targetRow = rowIndex;
+    if (!targetRow) {
+      const data = sheet.getDataRange().getValues();
+      for (let i = 1; i < data.length; i++) {
+        if (String(data[i][COL_PO.ID_POLLADA] || '').trim() === String(id_pollada).trim()) {
+          targetRow = i + 1;
+          break;
+        }
+      }
+    }
+    if (!targetRow) return jsonResponse({ success: false, error: 'Pollada no encontrada para actualizar' });
+
+    const row = sheet.getRange(targetRow, 1, 1, 9).getValues()[0];
+    if (titulo !== undefined) row[COL_PO.TITULO] = String(titulo).trim().toUpperCase();
+    if (fecha !== undefined) row[COL_PO.FECHA] = String(fecha).trim();
+    if (hora !== undefined) row[COL_PO.HORA] = String(hora).trim();
+    if (lugar !== undefined) row[COL_PO.LUGAR] = String(lugar).trim();
+    if (precio_ticket !== undefined) row[COL_PO.PRECIO_TICKET] = parseFloat(precio_ticket) || 16;
+    if (min_tickets !== undefined) row[COL_PO.MIN_TICKETS] = parseInt(min_tickets, 10) || 2;
+    if (estado !== undefined) row[COL_PO.ESTADO] = String(estado).toLowerCase().trim();
+
+    sheet.getRange(targetRow, 1, 1, 9).setValues([row]);
+    return jsonResponse({ success: true, message: 'Apoyada actualizada correctamente' });
+  } catch(err) {
+    return jsonResponse({ success: false, error: err.toString() });
+  }
+}
+
+/**
+ * Elimina una pollada y sus tickets asociados.
+ */
+function handleDeletePollada(payload) {
+  try {
+    const { id_pollada, rowIndex } = payload;
+    if (!id_pollada) return jsonResponse({ success: false, error: 'id_pollada requerido' });
+
+    const sheet = getSheet(SHEET_POLLADAS);
+    if (!sheet) return jsonResponse({ success: false, error: 'No se encontró la pestaña Polladas' });
+
+    let targetRow = rowIndex;
+    if (!targetRow) {
+      const data = sheet.getDataRange().getValues();
+      for (let i = 1; i < data.length; i++) {
+        if (String(data[i][COL_PO.ID_POLLADA] || '').trim() === String(id_pollada).trim()) {
+          targetRow = i + 1;
+          break;
+        }
+      }
+    }
+    if (!targetRow) return jsonResponse({ success: false, error: 'Pollada no encontrada' });
+
+    sheet.deleteRow(targetRow);
+    return jsonResponse({ success: true, message: 'Apoyada eliminada correctamente' });
+  } catch(err) {
+    return jsonResponse({ success: false, error: err.toString() });
+  }
+}
+
+/**
+ * Lista todos los tickets de una pollada.
+ */
+function handleGetTicketsPollada(id_pollada) {
+  try {
+    const sheet = getSheet(SHEET_TICKETS_POLLADA);
+    if (!sheet) return jsonResponse({ success: true, data: [], total: 0 });
+
+    const data = sheet.getDataRange().getValues();
+    const tickets = [];
+
+    for (let i = 1; i < data.length; i++) {
+      const row = data[i];
+      const rowIdPollada = String(row[COL_TK.ID_POLLADA] || '').trim();
+      if (id_pollada && rowIdPollada !== String(id_pollada).trim()) continue;
+
+      const id = String(row[COL_TK.ID_COMPRA] || '').trim();
+      if (!id) continue;
+
+      tickets.push({
+        rowIndex: i + 1,
+        id_compra: id,
+        id_pollada: rowIdPollada,
+        titulo_pollada: String(row[COL_TK.TITULO_POLLADA] || '').trim(),
+        dni: String(row[COL_TK.DNI] || '').replace(/\D/g, '').trim(),
+        nombres: String(row[COL_TK.NOMBRES] || '').trim(),
+        apellidos: String(row[COL_TK.APELLIDOS] || '').trim(),
+        base: String(row[COL_TK.BASE] || '').trim(),
+        cantidad_tickets: parseInt(row[COL_TK.CANTIDAD_TICKETS] || '0', 10),
+        num_ticket_inicio: String(row[COL_TK.NUM_TICKET_INICIO] || '').trim(),
+        num_ticket_fin: String(row[COL_TK.NUM_TICKET_FIN] || '').trim(),
+        monto_pagado: parseFloat(row[COL_TK.MONTO_PAGADO] || '0'),
+        estado: String(row[COL_TK.ESTADO] || 'comprado').trim().toLowerCase(),
+        registrado_por: String(row[COL_TK.REGISTRADO_POR] || '').trim(),
+        fecha_compra: cleanSheetDateTime(row[COL_TK.FECHA_COMPRA]),
+        fecha_verificacion: cleanSheetDateTime(row[COL_TK.FECHA_VERIFICACION]),
+        fecha_entrega: cleanSheetDateTime(row[COL_TK.FECHA_ENTREGA])
+      });
+    }
+
+    return jsonResponse({ success: true, data: tickets, total: tickets.length });
+  } catch(err) {
+    return jsonResponse({ success: false, error: err.toString() });
+  }
+}
+
+/**
+ * Verifica si un militante tiene tickets registrados en una pollada.
+ */
+function handleCheckTicketPollada(id_pollada, dni) {
+  try {
+    if (!id_pollada || !dni) return jsonResponse({ success: false, error: 'id_pollada y dni requeridos' });
+
+    const cleanDni = String(dni).replace(/\D/g, '').trim();
+    const sheet = getSheet(SHEET_TICKETS_POLLADA);
+    if (!sheet) return jsonResponse({ success: true, found: false });
+
+    const data = sheet.getDataRange().getValues();
+    for (let i = 1; i < data.length; i++) {
+      const row = data[i];
+      const rowDni = String(row[COL_TK.DNI] || '').replace(/\D/g, '').trim();
+      const rowIdPollada = String(row[COL_TK.ID_POLLADA] || '').trim();
+      if (rowDni === cleanDni && rowIdPollada === String(id_pollada).trim()) {
+        return jsonResponse({
+          success: true,
+          found: true,
+          data: {
+            rowIndex: i + 1,
+            id_compra: String(row[COL_TK.ID_COMPRA] || '').trim(),
+            dni: rowDni,
+            nombres: String(row[COL_TK.NOMBRES] || '').trim(),
+            apellidos: String(row[COL_TK.APELLIDOS] || '').trim(),
+            base: String(row[COL_TK.BASE] || '').trim(),
+            cantidad_tickets: parseInt(row[COL_TK.CANTIDAD_TICKETS] || '0', 10),
+            num_ticket_inicio: String(row[COL_TK.NUM_TICKET_INICIO] || '').trim(),
+            num_ticket_fin: String(row[COL_TK.NUM_TICKET_FIN] || '').trim(),
+            monto_pagado: parseFloat(row[COL_TK.MONTO_PAGADO] || '0'),
+            estado: String(row[COL_TK.ESTADO] || 'comprado').trim().toLowerCase(),
+            fecha_compra: cleanSheetDateTime(row[COL_TK.FECHA_COMPRA]),
+            fecha_verificacion: cleanSheetDateTime(row[COL_TK.FECHA_VERIFICACION]),
+            fecha_entrega: cleanSheetDateTime(row[COL_TK.FECHA_ENTREGA])
+          }
+        });
+      }
+    }
+    return jsonResponse({ success: true, found: false });
+  } catch(err) {
+    return jsonResponse({ success: false, error: err.toString() });
+  }
+}
+
+/**
+ * Registra la compra de tickets de una pollada por un militante.
+ * El coordinador de base escanea la credencial y registra la compra.
+ */
+function handleRegistrarCompra(payload) {
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(20000);
+
+    const { id_pollada, dni, cantidad_tickets, num_ticket_inicio, num_ticket_fin, monto_pagado, registrado_por } = payload;
+
+    if (!id_pollada || !dni || !cantidad_tickets) {
+      return jsonResponse({ success: false, error: 'id_pollada, dni y cantidad_tickets son requeridos' });
+    }
+
+    const cleanDni = String(dni).replace(/\D/g, '').trim();
+    if (cleanDni.length < 8) return jsonResponse({ success: false, error: 'El DNI debe tener al menos 8 dígitos' });
+
+    const cantidadNum = parseInt(cantidad_tickets, 10);
+    if (isNaN(cantidadNum) || cantidadNum < 1) return jsonResponse({ success: false, error: 'La cantidad de tickets debe ser al menos 1' });
+
+    // Verificar que la pollada exista y esté activa para venta
+    const sheetPO = getSheet(SHEET_POLLADAS);
+    if (!sheetPO) return jsonResponse({ success: false, error: 'No se encontró la pestaña Polladas' });
+
+    const dataPO = sheetPO.getDataRange().getValues();
+    let pollada = null;
+    for (let i = 1; i < dataPO.length; i++) {
+      if (String(dataPO[i][COL_PO.ID_POLLADA] || '').trim() === String(id_pollada).trim()) {
+        pollada = {
+          id_pollada: String(dataPO[i][COL_PO.ID_POLLADA] || '').trim(),
+          titulo: String(dataPO[i][COL_PO.TITULO] || '').trim(),
+          precio_ticket: parseFloat(dataPO[i][COL_PO.PRECIO_TICKET] || '16'),
+          min_tickets: parseInt(dataPO[i][COL_PO.MIN_TICKETS] || '2', 10),
+          estado: String(dataPO[i][COL_PO.ESTADO] || '').trim().toLowerCase()
+        };
+        break;
+      }
+    }
+    if (!pollada) return jsonResponse({ success: false, error: 'La apoyada especificada no existe' });
+    if (pollada.estado === 'finalizado') return jsonResponse({ success: false, error: 'Esta apoyada ya finalizó y no acepta más registros' });
+    if (pollada.estado === 'recojo') return jsonResponse({ success: false, error: 'Esta apoyada ya está en fase de recojo. No se pueden registrar más compras.' });
+
+    if (cantidadNum < pollada.min_tickets) {
+      return jsonResponse({ success: false, error: `El mínimo de tickets por militante es ${pollada.min_tickets}` });
+    }
+
+    // Verificar que el militante exista en el padrón
+    const sheetM = getSheet(SHEET_MILITANTES);
+    if (!sheetM) return jsonResponse({ success: false, error: 'No se encontró la pestaña Base_Militantes' });
+
+    const dataM = sheetM.getDataRange().getValues();
+    let militante = null;
+    for (let i = 1; i < dataM.length; i++) {
+      const rowDni = String(dataM[i][COL_M.DNI] || '').replace(/\D/g, '').trim();
+      if (rowDni === cleanDni) {
+        militante = {
+          dni: rowDni,
+          nombres: String(dataM[i][COL_M.NOMBRES] || '').trim(),
+          apellidos: String(dataM[i][COL_M.APELLIDOS] || '').trim(),
+          base: String(dataM[i][COL_M.BASE] || '').trim()
+        };
+        break;
+      }
+    }
+    if (!militante) {
+      return jsonResponse({ success: false, notFound: true, error: `El DNI ${cleanDni} no figura en el padrón oficial de Fuerza Tacna` });
+    }
+
+    // Verificar si ya tiene compra registrada para esta pollada
+    const sheetTK = getSheet(SHEET_TICKETS_POLLADA);
+    if (!sheetTK) return jsonResponse({ success: false, error: 'No se encontró la pestaña Tickets_Pollada' });
+
+    const dataTK = sheetTK.getDataRange().getValues();
+    for (let i = 1; i < dataTK.length; i++) {
+      const rowDni = String(dataTK[i][COL_TK.DNI] || '').replace(/\D/g, '').trim();
+      const rowPollada = String(dataTK[i][COL_TK.ID_POLLADA] || '').trim();
+      const rowEstado = String(dataTK[i][COL_TK.ESTADO] || '').toLowerCase();
+      if (rowDni === cleanDni && rowPollada === String(id_pollada).trim() && rowEstado !== 'cancelado') {
+        return jsonResponse({
+          success: false,
+          alreadyRegistered: true,
+          error: `${militante.nombres} ya tiene ${dataTK[i][COL_TK.CANTIDAD_TICKETS]} ticket(s) comprado(s) para esta apoyada`
+        });
+      }
+    }
+
+    // Registrar la compra
+    const idCompra = 'TKT-' + new Date().getTime().toString(36).toUpperCase();
+    const nowStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone() || 'America/Lima', 'yyyy-MM-dd HH:mm:ss');
+    const montoFinal = monto_pagado !== undefined ? parseFloat(monto_pagado) : (cantidadNum * pollada.precio_ticket);
+
+    const newRow = [
+      idCompra,
+      pollada.id_pollada,
+      pollada.titulo,
+      "'" + cleanDni,
+      militante.nombres,
+      militante.apellidos,
+      militante.base,
+      cantidadNum,
+      String(num_ticket_inicio || '').trim(),
+      String(num_ticket_fin || '').trim(),
+      montoFinal,
+      'comprado',
+      String(registrado_por || '').trim(),
+      "'" + nowStr,
+      '',
+      ''
+    ];
+
+    sheetTK.appendRow(newRow);
+    const newRowIndex = sheetTK.getLastRow();
+    sheetTK.getRange(newRowIndex, COL_TK.DNI + 1).setNumberFormat('@');
+    sheetTK.getRange(newRowIndex, COL_TK.FECHA_COMPRA + 1).setNumberFormat('@');
+
+    return jsonResponse({
+      success: true,
+      message: `✅ Compra registrada: ${militante.nombres} — ${cantidadNum} ticket(s) — S/.${montoFinal}`,
+      data: {
+        id_compra: idCompra,
+        id_pollada: pollada.id_pollada,
+        titulo_pollada: pollada.titulo,
+        dni: cleanDni,
+        nombres: militante.nombres,
+        apellidos: militante.apellidos,
+        base: militante.base,
+        cantidad_tickets: cantidadNum,
+        num_ticket_inicio: String(num_ticket_inicio || '').trim(),
+        num_ticket_fin: String(num_ticket_fin || '').trim(),
+        monto_pagado: montoFinal,
+        estado: 'comprado',
+        fecha_compra: nowStr,
+        rowIndex: newRowIndex
+      }
+    });
+  } catch(err) {
+    return jsonResponse({ success: false, error: 'Error al registrar compra: ' + err.toString() });
+  } finally {
+    try { lock.releaseLock(); } catch(e) {}
+  }
+}
+
+/**
+ * Verifica y sella digitalmente el ticket de un militante en la puerta.
+ * Solo procede si el militante tiene estado 'comprado'.
+ */
+function handleVerificarTicket(payload) {
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(20000);
+
+    const { id_pollada, dni, verificado_por } = payload;
+    if (!id_pollada || !dni) return jsonResponse({ success: false, error: 'id_pollada y dni requeridos' });
+
+    const cleanDni = String(dni).replace(/\D/g, '').trim();
+    const sheet = getSheet(SHEET_TICKETS_POLLADA);
+    if (!sheet) return jsonResponse({ success: false, error: 'No se encontraron tickets registrados' });
+
+    const data = sheet.getDataRange().getValues();
+    for (let i = 1; i < data.length; i++) {
+      const row = data[i];
+      const rowDni = String(row[COL_TK.DNI] || '').replace(/\D/g, '').trim();
+      const rowPollada = String(row[COL_TK.ID_POLLADA] || '').trim();
+      if (rowDni !== cleanDni || rowPollada !== String(id_pollada).trim()) continue;
+
+      const estado = String(row[COL_TK.ESTADO] || '').toLowerCase();
+
+      if (estado === 'cancelado') {
+        return jsonResponse({ success: false, error: 'Este ticket fue cancelado y no es válido' });
+      }
+      if (estado === 'entregado') {
+        return jsonResponse({
+          success: false,
+          alreadyDelivered: true,
+          error: `${row[COL_TK.NOMBRES]} ya recibió su pollada. No puede pasar nuevamente.`
+        });
+      }
+      if (estado === 'verificado') {
+        const horaVerif = cleanSheetDateTime(row[COL_TK.FECHA_VERIFICACION]);
+        return jsonResponse({
+          success: false,
+          alreadyVerified: true,
+          error: `${row[COL_TK.NOMBRES]} ya fue verificado a las ${horaVerif}. Puede pasar a cocina.`,
+          data: {
+            id_compra: String(row[COL_TK.ID_COMPRA] || '').trim(),
+            dni: rowDni,
+            nombres: String(row[COL_TK.NOMBRES] || '').trim(),
+            apellidos: String(row[COL_TK.APELLIDOS] || '').trim(),
+            cantidad_tickets: parseInt(row[COL_TK.CANTIDAD_TICKETS] || '0', 10),
+            fecha_verificacion: horaVerif
+          }
+        });
+      }
+
+      // Marcar como verificado
+      const nowStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone() || 'America/Lima', 'yyyy-MM-dd HH:mm:ss');
+      const rowIdx = i + 1;
+      sheet.getRange(rowIdx, COL_TK.ESTADO + 1).setValue('verificado');
+      sheet.getRange(rowIdx, COL_TK.FECHA_VERIFICACION + 1).setNumberFormat('@').setValue("'" + nowStr);
+      if (verificado_por) sheet.getRange(rowIdx, COL_TK.REGISTRADO_POR + 1).setValue(String(verificado_por));
+
+      return jsonResponse({
+        success: true,
+        message: `✅ Verificado: ${row[COL_TK.NOMBRES]} ${row[COL_TK.APELLIDOS]} — ${row[COL_TK.CANTIDAD_TICKETS]} ticket(s). Puede pasar a cocina.`,
+        data: {
+          id_compra: String(row[COL_TK.ID_COMPRA] || '').trim(),
+          dni: rowDni,
+          nombres: String(row[COL_TK.NOMBRES] || '').trim(),
+          apellidos: String(row[COL_TK.APELLIDOS] || '').trim(),
+          base: String(row[COL_TK.BASE] || '').trim(),
+          cantidad_tickets: parseInt(row[COL_TK.CANTIDAD_TICKETS] || '0', 10),
+          num_ticket_inicio: String(row[COL_TK.NUM_TICKET_INICIO] || '').trim(),
+          num_ticket_fin: String(row[COL_TK.NUM_TICKET_FIN] || '').trim(),
+          estado: 'verificado',
+          fecha_verificacion: nowStr
+        }
+      });
+    }
+
+    return jsonResponse({
+      success: false,
+      notFound: true,
+      error: `El DNI ${cleanDni} no tiene tickets registrados para esta apoyada`
+    });
+  } catch(err) {
+    return jsonResponse({ success: false, error: 'Error al verificar ticket: ' + err.toString() });
+  } finally {
+    try { lock.releaseLock(); } catch(e) {}
+  }
+}
+
+/**
+ * Registra la entrega de la pollada en cocina.
+ * Solo procede si el militante fue previamente verificado en puerta (estado='verificado').
+ */
+function handleRegistrarEntrega(payload) {
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(20000);
+
+    const { id_pollada, dni, entregado_por } = payload;
+    if (!id_pollada || !dni) return jsonResponse({ success: false, error: 'id_pollada y dni requeridos' });
+
+    const cleanDni = String(dni).replace(/\D/g, '').trim();
+    const sheet = getSheet(SHEET_TICKETS_POLLADA);
+    if (!sheet) return jsonResponse({ success: false, error: 'No se encontraron tickets registrados' });
+
+    const data = sheet.getDataRange().getValues();
+    for (let i = 1; i < data.length; i++) {
+      const row = data[i];
+      const rowDni = String(row[COL_TK.DNI] || '').replace(/\D/g, '').trim();
+      const rowPollada = String(row[COL_TK.ID_POLLADA] || '').trim();
+      if (rowDni !== cleanDni || rowPollada !== String(id_pollada).trim()) continue;
+
+      const estado = String(row[COL_TK.ESTADO] || '').toLowerCase();
+
+      if (estado === 'cancelado') {
+        return jsonResponse({ success: false, error: 'Este ticket fue cancelado y no es válido' });
+      }
+      if (estado === 'comprado') {
+        return jsonResponse({
+          success: false,
+          notVerified: true,
+          error: `${row[COL_TK.NOMBRES]} no ha pasado por el control de puerta. No puede recoger sin verificación previa.`
+        });
+      }
+      if (estado === 'entregado') {
+        const horaEntrega = cleanSheetDateTime(row[COL_TK.FECHA_ENTREGA]);
+        return jsonResponse({
+          success: false,
+          alreadyDelivered: true,
+          error: `${row[COL_TK.NOMBRES]} ya recibió su pollada a las ${horaEntrega}. No puede recoger nuevamente.`
+        });
+      }
+
+      // Registrar entrega (estado='verificado' → 'entregado')
+      const nowStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone() || 'America/Lima', 'yyyy-MM-dd HH:mm:ss');
+      const rowIdx = i + 1;
+      sheet.getRange(rowIdx, COL_TK.ESTADO + 1).setValue('entregado');
+      sheet.getRange(rowIdx, COL_TK.FECHA_ENTREGA + 1).setNumberFormat('@').setValue("'" + nowStr);
+
+      const cantidadTickets = parseInt(row[COL_TK.CANTIDAD_TICKETS] || '0', 10);
+      return jsonResponse({
+        success: true,
+        message: `🍗 Entregado: ${row[COL_TK.NOMBRES]} ${row[COL_TK.APELLIDOS]} — ${cantidadTickets} porción(es)`,
+        data: {
+          id_compra: String(row[COL_TK.ID_COMPRA] || '').trim(),
+          dni: rowDni,
+          nombres: String(row[COL_TK.NOMBRES] || '').trim(),
+          apellidos: String(row[COL_TK.APELLIDOS] || '').trim(),
+          base: String(row[COL_TK.BASE] || '').trim(),
+          cantidad_tickets: cantidadTickets,
+          estado: 'entregado',
+          fecha_entrega: nowStr
+        }
+      });
+    }
+
+    return jsonResponse({
+      success: false,
+      notFound: true,
+      error: `El DNI ${cleanDni} no tiene tickets registrados para esta apoyada`
+    });
+  } catch(err) {
+    return jsonResponse({ success: false, error: 'Error al registrar entrega: ' + err.toString() });
+  } finally {
+    try { lock.releaseLock(); } catch(e) {}
+  }
+}
+
+/**
+ * Cancela una compra de tickets.
+ */
+function handleCancelarCompra(payload) {
+  try {
+    const { id_compra, id_pollada, dni } = payload;
+    if (!id_compra && !(id_pollada && dni)) {
+      return jsonResponse({ success: false, error: 'id_compra o (id_pollada + dni) requeridos' });
+    }
+
+    const sheet = getSheet(SHEET_TICKETS_POLLADA);
+    if (!sheet) return jsonResponse({ success: false, error: 'No se encontraron tickets' });
+
+    const data = sheet.getDataRange().getValues();
+    for (let i = 1; i < data.length; i++) {
+      const row = data[i];
+      const rowId = String(row[COL_TK.ID_COMPRA] || '').trim();
+      const rowDni = String(row[COL_TK.DNI] || '').replace(/\D/g, '').trim();
+      const rowPollada = String(row[COL_TK.ID_POLLADA] || '').trim();
+
+      const matches = id_compra
+        ? rowId === String(id_compra).trim()
+        : (rowDni === String(dni).replace(/\D/g, '').trim() && rowPollada === String(id_pollada).trim());
+
+      if (matches) {
+        const estado = String(row[COL_TK.ESTADO] || '').toLowerCase();
+        if (estado === 'entregado') {
+          return jsonResponse({ success: false, error: 'No se puede cancelar una entrega ya realizada' });
+        }
+        sheet.getRange(i + 1, COL_TK.ESTADO + 1).setValue('cancelado');
+        return jsonResponse({ success: true, message: 'Compra cancelada correctamente' });
+      }
+    }
+
+    return jsonResponse({ success: false, error: 'Compra no encontrada' });
+  } catch(err) {
+    return jsonResponse({ success: false, error: err.toString() });
   }
 }

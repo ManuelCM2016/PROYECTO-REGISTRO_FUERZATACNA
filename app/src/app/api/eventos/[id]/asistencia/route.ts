@@ -148,6 +148,14 @@ export async function POST(
       metodo: safeMetodo,
     });
 
+    // Sanitizar cualquier error técnico interno de rebote de Google Apps Script
+    if (!result.success && typeof result.error === 'string' && result.error.includes('Acción GET')) {
+      return NextResponse.json({
+        success: false,
+        error: 'Intermitencia temporal con el servidor. Por favor, pulsa Confirmar Asistencia nuevamente.',
+      });
+    }
+
     return NextResponse.json(result);
   } catch (error) {
     console.error('Error marcando asistencia:', error);

@@ -109,3 +109,42 @@ export interface Asistencia {
   estado_militante?: 'completado' | 'en_revision' | 'pendiente' | string;
 }
 
+// ============================================
+// Tipos para el sistema de Apoyada / Pollada
+// ============================================
+
+export interface Pollada {
+  rowIndex?: number;
+  id_pollada: string;
+  titulo: string;
+  fecha: string;
+  hora?: string;
+  lugar?: string;
+  precio_ticket: number;
+  min_tickets: number;
+  estado: 'activo' | 'venta' | 'recojo' | 'finalizado';
+  creado_en?: string;
+  total_tickets_vendidos?: number;
+  total_recaudado?: number;
+  total_entregados?: number;
+}
+
+export interface TicketPollada {
+  rowIndex?: number;
+  id_compra: string;
+  id_pollada: string;
+  titulo_pollada?: string;
+  dni: string;
+  nombres?: string;
+  apellidos?: string;
+  base?: string;
+  cantidad_tickets: number;
+  num_ticket_inicio?: string;
+  num_ticket_fin?: string;
+  monto_pagado: number;
+  estado: 'comprado' | 'verificado' | 'entregado' | 'cancelado';
+  registrado_por?: string;
+  fecha_compra?: string;
+  fecha_verificacion?: string;
+  fecha_entrega?: string;
+}

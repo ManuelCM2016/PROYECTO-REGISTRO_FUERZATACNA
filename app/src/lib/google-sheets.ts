@@ -10,6 +10,8 @@ import type {
   DniCheckResult,
   Evento,
   Asistencia,
+  Pollada,
+  TicketPollada,
 } from '@/types';
 
 const APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
@@ -186,10 +188,21 @@ async function appsScriptPost<T>(payload: Record<string, unknown>, retries = 2):
   // Adquirir slot del semáforo antes de llamar a Google Apps Script
   await gasSemaphore.acquire();
 
+  // Construir la URL con el action y parámetros clave en la query string.
+  // Esto es VITAL porque si Google Apps Script o el proxy redirige internamente vía 302 a GET,
+  // los query params se conservan y evitan que el servidor reciba un GET con action=undefined.
+  const postUrl = new URL(APPS_SCRIPT_URL);
+  if (action) {
+    postUrl.searchParams.set('action', action);
+  }
+  if (payload.id_evento) postUrl.searchParams.set('id_evento', String(payload.id_evento));
+  if (payload.dni) postUrl.searchParams.set('dni', String(payload.dni));
+  if (payload.metodo) postUrl.searchParams.set('metodo', String(payload.metodo));
+
   try {
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        const response = await fetch(APPS_SCRIPT_URL, {
+        const response = await fetch(postUrl.toString(), {
           method: 'POST',
           body: JSON.stringify(payload),
           headers: {
@@ -216,7 +229,33 @@ async function appsScriptPost<T>(payload: Record<string, unknown>, retries = 2):
           }
         }
 
-        const result = JSON.parse(text) as T;
+        const result = JSON.parse(text) as any;
+
+        // Si Google Apps Script respondió con un rebote erróneo de GET no válido
+        if (result && result.success === false && typeof result.error === 'string' && result.error.includes('Acción GET')) {
+          // Si era marcarAsistencia, verificar si ya se grabó exitosamente en la hoja
+          if (action === 'marcarAsistencia' && payload.id_evento && payload.dni) {
+            try {
+              const check = await checkAsistencia(String(payload.id_evento), String(payload.dni));
+              if (check.success && (check as any).data?.alreadyMarked) {
+                const asistData = (check as any).data;
+                return {
+                  success: true,
+                  message: `¡Asistencia registrada con éxito! Bienvenido(a) ${asistData.nombres || ''}`,
+                  data: asistData,
+                } as unknown as T;
+              }
+            } catch {
+              // si falla la verificación, reintentamos
+            }
+          }
+
+          if (attempt < maxAttempts) {
+            await delay(600 * attempt);
+            continue;
+          }
+        }
+
         // Invalidación confirmada
         if (action.includes('Militante')) {
           invalidateCache(['getMilitantes', 'getStats', 'searchMilitantes', 'findByPhone', 'checkDni']);
@@ -227,7 +266,7 @@ async function appsScriptPost<T>(payload: Record<string, unknown>, retries = 2):
         } else if (action.includes('Usuario')) {
           invalidateCache(['getUsuarios', 'findUsuario']);
         }
-        return result;
+        return result as T;
       } catch (err) {
         lastError = err;
         if (attempt < maxAttempts) {
@@ -425,9 +464,129 @@ export async function marcarAsistencia(data: {
   dni: string;
   metodo: 'qr_puerta' | 'scan_admin' | 'manual';
 }): Promise<ApiResponse<Asistencia & { notFound?: boolean; alreadyMarked?: boolean }>> {
-  return appsScriptPost<ApiResponse<Asistencia & { notFound?: boolean; alreadyMarked?: boolean }>>({
-    action: 'marcarAsistencia',
+  return appsScriptPost<ApiResponse<Asistencia & { notFound?: boolean; alreadyMarked?: boolean }>>(
+    {
+      action: 'marcarAsistencia',
+      ...data,
+    }
+  );
+}
+
+// ============ APOYADA / POLLADA ============
+
+export async function getPolladas(forceFresh = false): Promise<ApiResponse<Pollada[]>> {
+  return appsScriptGet<ApiResponse<Pollada[]>>('getPolladas', {}, { ttlSeconds: 20, forceFresh });
+}
+
+export async function getPolladaById(id_pollada: string): Promise<ApiResponse<Pollada>> {
+  return appsScriptGet<ApiResponse<Pollada>>('getPolladaById', { id_pollada }, { ttlSeconds: 15 });
+}
+
+export async function addPollada(data: {
+  titulo: string;
+  fecha: string;
+  hora?: string;
+  lugar?: string;
+  precio_ticket?: number;
+  min_tickets?: number;
+}): Promise<ApiResponse<Pollada>> {
+  return appsScriptPost<ApiResponse<Pollada>>({
+    action: 'addPollada',
     ...data,
   });
 }
 
+export async function updatePollada(data: {
+  id_pollada: string;
+  rowIndex?: number;
+  titulo?: string;
+  fecha?: string;
+  hora?: string;
+  lugar?: string;
+  precio_ticket?: number;
+  min_tickets?: number;
+  estado?: 'activo' | 'venta' | 'recojo' | 'finalizado';
+}): Promise<ApiResponse> {
+  return appsScriptPost<ApiResponse>({
+    action: 'updatePollada',
+    ...data,
+  });
+}
+
+export async function deletePollada(id_pollada: string, rowIndex?: number): Promise<ApiResponse> {
+  return appsScriptPost<ApiResponse>({
+    action: 'deletePollada',
+    id_pollada,
+    rowIndex,
+  });
+}
+
+export async function getTicketsPollada(id_pollada: string, forceFresh = false): Promise<ApiResponse<TicketPollada[]>> {
+  return appsScriptGet<ApiResponse<TicketPollada[]>>(
+    'getTicketsPollada',
+    { id_pollada },
+    { ttlSeconds: 10, forceFresh }
+  );
+}
+
+export async function checkTicketPollada(
+  id_pollada: string,
+  dni: string
+): Promise<ApiResponse<TicketPollada & { found: boolean }>> {
+  return appsScriptGet<ApiResponse<TicketPollada & { found: boolean }>>(
+    'checkTicketPollada',
+    { id_pollada, dni },
+    { ttlSeconds: 5 }
+  );
+}
+
+export async function registrarCompra(data: {
+  id_pollada: string;
+  dni: string;
+  cantidad_tickets: number;
+  num_ticket_inicio?: string;
+  num_ticket_fin?: string;
+  monto_pagado?: number;
+  registrado_por?: string;
+}): Promise<ApiResponse<TicketPollada & { alreadyRegistered?: boolean; notFound?: boolean }>> {
+  return appsScriptPost<ApiResponse<TicketPollada & { alreadyRegistered?: boolean; notFound?: boolean }>>(
+    {
+      action: 'registrarCompra',
+      ...data,
+    }
+  );
+}
+
+export async function verificarTicket(data: {
+  id_pollada: string;
+  dni: string;
+  verificado_por?: string;
+}): Promise<ApiResponse<TicketPollada & { alreadyVerified?: boolean; alreadyDelivered?: boolean; notFound?: boolean }>> {
+  return appsScriptPost<ApiResponse<TicketPollada & { alreadyVerified?: boolean; alreadyDelivered?: boolean; notFound?: boolean }>>(
+    {
+      action: 'verificarTicket',
+      ...data,
+    }
+  );
+}
+
+export async function registrarEntrega(data: {
+  id_pollada: string;
+  dni: string;
+  entregado_por?: string;
+}): Promise<ApiResponse<TicketPollada & { notVerified?: boolean; alreadyDelivered?: boolean; notFound?: boolean }>> {
+  return appsScriptPost<ApiResponse<TicketPollada & { notVerified?: boolean; alreadyDelivered?: boolean; notFound?: boolean }>>(
+    {
+      action: 'registrarEntrega',
+      ...data,
+    }
+  );
+}
+
+export async function cancelarCompra(data: {
+  id_compra?: string;
+  id_pollada?: string;
+  dni?: string;
+}): Promise<ApiResponse> {
+  return appsScriptPost<ApiResponse>({ action: 'cancelarCompra', ...data });
+}

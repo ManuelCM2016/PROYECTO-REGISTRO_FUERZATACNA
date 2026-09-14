@@ -104,7 +104,12 @@ export default function EventoPuertaPage({ params }: { params: Promise<{ id: str
       } else if (result.notFound) {
         setResultState('not_found');
       } else {
-        setErrorMsg(result.error || 'No se pudo registrar la asistencia');
+        const rawErr = String(result.error || '');
+        if (rawErr.includes('Acción GET') || rawErr.includes('undefined')) {
+          setErrorMsg('Intermitencia momentánea de red. Pulsa Confirmar Asistencia nuevamente.');
+        } else {
+          setErrorMsg(rawErr || 'No se pudo registrar la asistencia');
+        }
       }
     } catch {
       setErrorMsg('Error de conexión. Por favor verifica tu internet e intenta nuevamente.');
@@ -174,7 +179,12 @@ export default function EventoPuertaPage({ params }: { params: Promise<{ id: str
         setErrorMsg(result.message || 'Ya habías registrado tu asistencia a este evento');
         setResultState('already');
       } else {
-        setDoorRegisterError(result.error || 'No se pudo completar el registro');
+        const rawErr = String(result.error || '');
+        if (rawErr.includes('Acción GET') || rawErr.includes('undefined')) {
+          setDoorRegisterError('Intermitencia momentánea de red. Pulsa Confirmar nuevamente.');
+        } else {
+          setDoorRegisterError(rawErr || 'No se pudo completar el registro');
+        }
       }
     } catch {
       setDoorRegisterError('Error de conexión. Verifica tu internet e intenta de nuevo.');
