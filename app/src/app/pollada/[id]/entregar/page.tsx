@@ -123,7 +123,7 @@ export default function EntregarPage({ params }: { params: Promise<{ id: string 
           <div className="h-7 bg-primary-800/40 rounded w-64 mx-auto animate-pulse" />
         ) : (
           <>
-            <h1 className="text-xl font-black text-[#f8f9f9]">{pollada?.titulo || 'Apoyada'}</h1>
+            <h1 className="text-xl font-black text-[#f8f9f9]">{pollada?.titulo || 'Pollada'}</h1>
             {pollada?.fecha && (
               <p className="text-sm text-primary-300/60 mt-1">
                 📅 {pollada.fecha} {pollada.hora && `• 🕐 ${pollada.hora}`}
@@ -186,6 +186,12 @@ export default function EntregarPage({ params }: { params: Promise<{ id: string 
                         {result.data.nombres} {result.data.apellidos}
                       </p>
                       <p className="text-primary-300/70">DNI: {result.data.dni}</p>
+                      {result.data.num_ticket_inicio && (
+                        <p className="text-xs text-amber-300 font-mono font-bold">
+                          Tickets Físicos: #{result.data.num_ticket_inicio}
+                          {result.data.num_ticket_fin && result.data.num_ticket_fin !== result.data.num_ticket_inicio && !result.data.num_ticket_inicio.includes(',') && ` al #${result.data.num_ticket_fin}`}
+                        </p>
+                      )}
                       {result.data.cantidad_tickets && (
                         <div className="mt-2 bg-green-500/20 border border-green-500/40 rounded-xl px-4 py-3 text-center">
                           <p className="text-3xl font-black text-green-300">{result.data.cantidad_tickets}</p>
@@ -238,7 +244,7 @@ export default function EntregarPage({ params }: { params: Promise<{ id: string 
 
       {/* Footer */}
       <p className="text-center text-xs text-primary-600/40 mt-4 pb-2">
-        Fuerza Tacna — Sistema de Control de Apoyada
+        Fuerza Tacna — Sistema de Control de Polladas
       </p>
     </div>
   );

@@ -67,6 +67,7 @@ export interface DniCheckResult {
     dni: string;
     nombres?: string;
     apellidos?: string;
+    base?: string;
     id_whatsapp?: string;
     estado_registro?: string;
   };
@@ -110,7 +111,7 @@ export interface Asistencia {
 }
 
 // ============================================
-// Tipos para el sistema de Apoyada / Pollada
+// Tipos para el sistema de Polladas
 // ============================================
 
 export interface Pollada {
@@ -122,6 +123,9 @@ export interface Pollada {
   lugar?: string;
   precio_ticket: number;
   min_tickets: number;
+  total_estimado?: number;
+  ticket_inicio_talonario?: string;
+  ticket_fin_talonario?: string;
   estado: 'activo' | 'venta' | 'recojo' | 'finalizado';
   creado_en?: string;
   total_tickets_vendidos?: number;
@@ -141,10 +145,13 @@ export interface TicketPollada {
   cantidad_tickets: number;
   num_ticket_inicio?: string;
   num_ticket_fin?: string;
+  numeros_tickets?: string[];
   monto_pagado: number;
   estado: 'comprado' | 'verificado' | 'entregado' | 'cancelado';
   registrado_por?: string;
   fecha_compra?: string;
   fecha_verificacion?: string;
   fecha_entrega?: string;
+  entregado_por?: string;
+  telefono?: string;
 }

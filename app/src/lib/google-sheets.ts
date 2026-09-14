@@ -78,6 +78,14 @@ export function invalidateCache(actionKeys?: string[]): void {
   }
 }
 
+export function getCachedMilitantesList(): Militante[] | null {
+  const cached = memoryCache.get('getMilitantes:{}');
+  if (cached && Array.isArray((cached.data as any)?.data)) {
+    return (cached.data as any).data as Militante[];
+  }
+  return null;
+}
+
 async function appsScriptGet<T>(
   action: string,
   params: Record<string, string> = {},
@@ -87,7 +95,7 @@ async function appsScriptGet<T>(
     throw new Error('APPS_SCRIPT_URL no está configurada en .env.local');
   }
 
-  const { ttlSeconds = 25, forceFresh = false, retries = 2 } = options;
+  const { ttlSeconds = 30, forceFresh = false, retries = 1 } = options;
   const cacheKey = `${action}:${JSON.stringify(params)}`;
   const now = Date.now();
 
@@ -118,6 +126,7 @@ async function appsScriptGet<T>(
           method: 'GET',
           redirect: 'follow',
           cache: 'no-store',
+          signal: AbortSignal.timeout(9000),
         });
 
         const text = await response.text();
@@ -209,6 +218,7 @@ async function appsScriptPost<T>(payload: Record<string, unknown>, retries = 2):
             'Content-Type': 'text/plain',
           },
           redirect: 'follow',
+          signal: AbortSignal.timeout(12000),
         });
 
         const text = await response.text();
@@ -302,7 +312,47 @@ export async function findMilitanteByPhone(telefono: string): Promise<VerifyPhon
 }
 
 export async function checkDni(dni: string): Promise<DniCheckResult> {
-  return appsScriptGet<DniCheckResult>('checkDni', { dni }, { ttlSeconds: 15 });
+  return appsScriptGet<DniCheckResult>('checkDni', { dni }, { ttlSeconds: 30 });
+}
+
+export async function findMilitanteByDni(dni: string): Promise<ApiResponse<Militante>> {
+  const clean = String(dni).replace(/\D/g, '').trim();
+  const list = getCachedMilitantesList();
+  if (list && list.length > 0) {
+    const found = list.find((m) => String(m.dni).replace(/\D/g, '').trim() === clean);
+    if (found) {
+      return { success: true, found: true, data: found };
+    }
+  }
+
+  try {
+    const checkRes = await checkDni(clean);
+    if (checkRes && checkRes.success && checkRes.found && checkRes.data) {
+      return {
+        success: true,
+        found: true,
+        data: {
+          id_whatsapp: checkRes.data.id_whatsapp || '',
+          nombres: checkRes.data.nombres || '',
+          apellidos: checkRes.data.apellidos || '',
+          dni: checkRes.data.dni || clean,
+          base: checkRes.data.base || '',
+          estado_registro: (checkRes.data.estado_registro as any) || 'completado',
+          canal_registro: 'Padrón Oficial',
+        },
+      };
+    }
+  } catch {}
+
+  try {
+    const searchRes = await searchMilitantes(clean);
+    if (searchRes && searchRes.success && Array.isArray(searchRes.data) && searchRes.data.length > 0) {
+      const m = searchRes.data.find((item) => String(item.dni).replace(/\D/g, '').trim() === clean) || searchRes.data[0];
+      return { success: true, found: true, data: m };
+    }
+  } catch {}
+
+  return { success: true, found: false, error: `El DNI ${clean} no figura en el padrón oficial` };
 }
 
 export async function searchMilitantes(query: string): Promise<ApiResponse<Militante[]>> {
@@ -472,7 +522,7 @@ export async function marcarAsistencia(data: {
   );
 }
 
-// ============ APOYADA / POLLADA ============
+// ============ POLLADAS ============
 
 export async function getPolladas(forceFresh = false): Promise<ApiResponse<Pollada[]>> {
   return appsScriptGet<ApiResponse<Pollada[]>>('getPolladas', {}, { ttlSeconds: 20, forceFresh });
@@ -489,6 +539,9 @@ export async function addPollada(data: {
   lugar?: string;
   precio_ticket?: number;
   min_tickets?: number;
+  total_estimado?: number;
+  ticket_inicio_talonario?: string;
+  ticket_fin_talonario?: string;
 }): Promise<ApiResponse<Pollada>> {
   return appsScriptPost<ApiResponse<Pollada>>({
     action: 'addPollada',
@@ -505,6 +558,9 @@ export async function updatePollada(data: {
   lugar?: string;
   precio_ticket?: number;
   min_tickets?: number;
+  total_estimado?: number;
+  ticket_inicio_talonario?: string;
+  ticket_fin_talonario?: string;
   estado?: 'activo' | 'venta' | 'recojo' | 'finalizado';
 }): Promise<ApiResponse> {
   return appsScriptPost<ApiResponse>({
@@ -546,6 +602,7 @@ export async function registrarCompra(data: {
   cantidad_tickets: number;
   num_ticket_inicio?: string;
   num_ticket_fin?: string;
+  numeros_tickets?: string[];
   monto_pagado?: number;
   registrado_por?: string;
 }): Promise<ApiResponse<TicketPollada & { alreadyRegistered?: boolean; notFound?: boolean }>> {

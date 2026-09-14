@@ -108,11 +108,11 @@ export default function VerificarPage({ params }: { params: Promise<{ id: string
 
   // Result config
   const resultConfig: Record<ResultState['type'], { bg: string; border: string; icon: string; title: string }> = {
-    success:          { bg: 'bg-green-500/20',  border: 'border-green-500/50', icon: '✅', title: '¡VERIFICADO! Puede pasar a cocina' },
-    already_verified: { bg: 'bg-amber-500/20',  border: 'border-amber-500/50', icon: '⚠️', title: 'Ya fue verificado' },
-    already_delivered:{ bg: 'bg-blue-500/20',   border: 'border-blue-500/50',  icon: '🍗', title: 'Ya recibió su pollada' },
-    not_found:        { bg: 'bg-red-500/20',    border: 'border-red-500/50',   icon: '❌', title: 'No registrado' },
-    error:            { bg: 'bg-red-500/20',    border: 'border-red-500/50',   icon: '🚫', title: 'Error' },
+    success: { bg: 'bg-green-500/20', border: 'border-green-500/50', icon: '✅', title: '¡VERIFICADO! Puede pasar a cocina' },
+    already_verified: { bg: 'bg-amber-500/20', border: 'border-amber-500/50', icon: '⚠️', title: 'Ya fue verificado' },
+    already_delivered: { bg: 'bg-blue-500/20', border: 'border-blue-500/50', icon: '🍗', title: 'Ya recibió su pollada' },
+    not_found: { bg: 'bg-red-500/20', border: 'border-red-500/50', icon: '❌', title: 'No registrado' },
+    error: { bg: 'bg-red-500/20', border: 'border-red-500/50', icon: '🚫', title: 'Error' },
   };
 
   return (
@@ -126,7 +126,7 @@ export default function VerificarPage({ params }: { params: Promise<{ id: string
           <div className="h-7 bg-primary-800/40 rounded w-64 mx-auto animate-pulse" />
         ) : (
           <>
-            <h1 className="text-xl font-black text-[#f8f9f9]">{pollada?.titulo || 'Apoyada'}</h1>
+            <h1 className="text-xl font-black text-[#f8f9f9]">{pollada?.titulo || 'Pollada'}</h1>
             {pollada?.fecha && (
               <p className="text-sm text-primary-300/60 mt-1">
                 📅 {pollada.fecha} {pollada.hora && `• 🕐 ${pollada.hora}`}
@@ -228,7 +228,7 @@ export default function VerificarPage({ params }: { params: Promise<{ id: string
 
       {/* Footer */}
       <p className="text-center text-xs text-primary-600/40 mt-4 pb-2">
-        Fuerza Tacna — Sistema de Control de Apoyada
+        Fuerza Tacna — Sistema de Control de Polladas
       </p>
     </div>
   );

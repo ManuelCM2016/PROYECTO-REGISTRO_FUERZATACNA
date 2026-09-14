@@ -41,3 +41,7 @@ next-env.d.ts
 
 # IDE & Agents
 .agents/
+
+# Local database cache
+.polladas_db.json
+*/.polladas_db.json

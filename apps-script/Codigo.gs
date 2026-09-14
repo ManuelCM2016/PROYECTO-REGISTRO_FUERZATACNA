@@ -6,8 +6,8 @@
  * vinculado a la hoja de cálculo BD_BASE_FUERZA_TACNA.
  * 
  * Novedades v3.0:
- * - Sistema completo de Apoyada / Pollada:
- *   * Registro de apoyadas (CRUD con pestañas Polladas y Tickets_Pollada).
+ * - Sistema completo de Polladas:
+ *   * Registro de polladas (CRUD con pestañas Polladas y Tickets_Pollada).
  *   * Registro de compras de tickets por coordinadores de base.
  *   * Verificación digital en puerta (reemplaza sello físico).
  *   * Registro de entrega en cocina con validación secuencial.
@@ -96,7 +96,10 @@ const COL_PO = {
   PRECIO_TICKET: 5,       // F
   MIN_TICKETS: 6,         // G
   ESTADO: 7,              // H (activo|venta|recojo|finalizado)
-  CREADO_EN: 8            // I
+  CREADO_EN: 8,           // I
+  TOTAL_ESTIMADO: 9,      // J
+  TICKET_INICIO_TALONARIO: 10, // K
+  TICKET_FIN_TALONARIO: 11     // L
 };
 
 // Columnas Tickets_Pollada (0-indexed)
@@ -183,7 +186,7 @@ function getSheet(name) {
 
   if (cleanTarget.includes('pollada') && !cleanTarget.includes('ticket')) {
     const newSheet = ss.insertSheet('Polladas');
-    newSheet.appendRow(['ID_POLLADA', 'TITULO', 'FECHA', 'HORA', 'LUGAR', 'PRECIO_TICKET', 'MIN_TICKETS', 'ESTADO', 'CREADO_EN']);
+    newSheet.appendRow(['ID_POLLADA', 'TITULO', 'FECHA', 'HORA', 'LUGAR', 'PRECIO_TICKET', 'MIN_TICKETS', 'ESTADO', 'CREADO_EN', 'TOTAL_ESTIMADO', 'TICKET_INICIO_TALONARIO', 'TICKET_FIN_TALONARIO']);
     return newSheet;
   }
 
@@ -395,7 +398,7 @@ function doGet(e) {
         }
         return jsonResponse({ success: false, error: 'id_evento y dni requeridos para marcar asistencia' });
       
-      // Apoyada / Pollada (v3.0)
+      // Polladas (v3.0)
       case 'getPolladas':
         return handleGetPolladas();
       case 'getPolladaById':
@@ -447,7 +450,7 @@ function doPost(e) {
       case 'marcarAsistencia':
         return handleMarcarAsistencia(payload);
       
-      // Apoyada / Pollada (v3.0)
+      // Polladas (v3.0)
       case 'addPollada':
         return handleAddPollada(payload);
       case 'updatePollada':
@@ -1557,10 +1560,10 @@ function handleMarcarAsistencia(payload) {
   }
 }
 
-// ============ APOYADA / POLLADA (v3.0) ============
+// ============ POLLADAS (v3.0) ============
 
 /**
- * Lista todas las polladas/apoyadas registradas.
+ * Lista todas las polladas/polladas registradas.
  */
 function handleGetPolladas() {
   try {
@@ -1605,6 +1608,9 @@ function handleGetPolladas() {
         lugar: String(row[COL_PO.LUGAR] || '').trim(),
         precio_ticket: parseFloat(row[COL_PO.PRECIO_TICKET] || '16'),
         min_tickets: parseInt(row[COL_PO.MIN_TICKETS] || '2', 10),
+        total_estimado: parseInt(row[COL_PO.TOTAL_ESTIMADO] || '1000', 10),
+        ticket_inicio_talonario: String(row[COL_PO.TICKET_INICIO_TALONARIO] || '').trim(),
+        ticket_fin_talonario: String(row[COL_PO.TICKET_FIN_TALONARIO] || '').trim(),
         estado: String(row[COL_PO.ESTADO] || 'activo').trim().toLowerCase(),
         creado_en: cleanSheetDateTime(row[COL_PO.CREADO_EN]),
         total_tickets_vendidos: totalTickets,
@@ -1644,6 +1650,9 @@ function handleGetPolladaById(id_pollada) {
             lugar: String(row[COL_PO.LUGAR] || '').trim(),
             precio_ticket: parseFloat(row[COL_PO.PRECIO_TICKET] || '16'),
             min_tickets: parseInt(row[COL_PO.MIN_TICKETS] || '2', 10),
+            total_estimado: parseInt(row[COL_PO.TOTAL_ESTIMADO] || '1000', 10),
+            ticket_inicio_talonario: String(row[COL_PO.TICKET_INICIO_TALONARIO] || '').trim(),
+            ticket_fin_talonario: String(row[COL_PO.TICKET_FIN_TALONARIO] || '').trim(),
             estado: String(row[COL_PO.ESTADO] || 'activo').trim().toLowerCase(),
             creado_en: cleanSheetDateTime(row[COL_PO.CREADO_EN])
           }
@@ -1657,20 +1666,23 @@ function handleGetPolladaById(id_pollada) {
 }
 
 /**
- * Crea una nueva pollada/apoyada.
+ * Crea una nueva pollada pro-fondos.
  */
 function handleAddPollada(payload) {
   try {
-    const { titulo, fecha, hora, lugar, precio_ticket, min_tickets } = payload;
+    const { titulo, fecha, hora, lugar, precio_ticket, min_tickets, total_estimado, ticket_inicio_talonario, ticket_fin_talonario } = payload;
     if (!titulo || !fecha) return jsonResponse({ success: false, error: 'Título y fecha son requeridos' });
 
     const sheet = getSheet(SHEET_POLLADAS);
     if (!sheet) return jsonResponse({ success: false, error: 'No se encontró la pestaña Polladas' });
 
-    const idPollada = 'APO-' + new Date().getTime().toString(36).toUpperCase();
+    const idPollada = 'POL-' + new Date().getTime().toString(36).toUpperCase();
     const nowStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone() || 'America/Lima', 'yyyy-MM-dd HH:mm:ss');
     const precioFinal = parseFloat(precio_ticket || '16') || 16;
     const minFinal = parseInt(min_tickets || '2', 10) || 2;
+    const totalEstimadoFinal = parseInt(total_estimado || '1000', 10) || 1000;
+    const tktInicioFinal = String(ticket_inicio_talonario || '5000').trim();
+    const tktFinFinal = String(ticket_fin_talonario || '6000').trim();
 
     const newRow = [
       idPollada,
@@ -1681,7 +1693,10 @@ function handleAddPollada(payload) {
       precioFinal,
       minFinal,
       'activo',
-      "'" + nowStr
+      "'" + nowStr,
+      totalEstimadoFinal,
+      tktInicioFinal,
+      tktFinFinal
     ];
 
     sheet.appendRow(newRow);
@@ -1690,7 +1705,7 @@ function handleAddPollada(payload) {
 
     return jsonResponse({
       success: true,
-      message: 'Apoyada creada exitosamente',
+      message: 'Pollada creada exitosamente',
       data: {
         id_pollada: idPollada,
         titulo: titulo.trim().toUpperCase(),
@@ -1699,6 +1714,9 @@ function handleAddPollada(payload) {
         lugar: lugar || '',
         precio_ticket: precioFinal,
         min_tickets: minFinal,
+        total_estimado: totalEstimadoFinal,
+        ticket_inicio_talonario: tktInicioFinal,
+        ticket_fin_talonario: tktFinFinal,
         estado: 'activo',
         creado_en: nowStr,
         rowIndex: newRowIndex
@@ -1714,7 +1732,7 @@ function handleAddPollada(payload) {
  */
 function handleUpdatePollada(payload) {
   try {
-    const { id_pollada, rowIndex, titulo, fecha, hora, lugar, precio_ticket, min_tickets, estado } = payload;
+    const { id_pollada, rowIndex, titulo, fecha, hora, lugar, precio_ticket, min_tickets, total_estimado, ticket_inicio_talonario, ticket_fin_talonario, estado } = payload;
     if (!id_pollada) return jsonResponse({ success: false, error: 'id_pollada requerido' });
 
     const sheet = getSheet(SHEET_POLLADAS);
@@ -1732,17 +1750,20 @@ function handleUpdatePollada(payload) {
     }
     if (!targetRow) return jsonResponse({ success: false, error: 'Pollada no encontrada para actualizar' });
 
-    const row = sheet.getRange(targetRow, 1, 1, 9).getValues()[0];
+    const row = sheet.getRange(targetRow, 1, 1, 12).getValues()[0];
     if (titulo !== undefined) row[COL_PO.TITULO] = String(titulo).trim().toUpperCase();
     if (fecha !== undefined) row[COL_PO.FECHA] = String(fecha).trim();
     if (hora !== undefined) row[COL_PO.HORA] = String(hora).trim();
     if (lugar !== undefined) row[COL_PO.LUGAR] = String(lugar).trim();
     if (precio_ticket !== undefined) row[COL_PO.PRECIO_TICKET] = parseFloat(precio_ticket) || 16;
     if (min_tickets !== undefined) row[COL_PO.MIN_TICKETS] = parseInt(min_tickets, 10) || 2;
+    if (total_estimado !== undefined) row[COL_PO.TOTAL_ESTIMADO] = parseInt(total_estimado, 10) || 1000;
+    if (ticket_inicio_talonario !== undefined) row[COL_PO.TICKET_INICIO_TALONARIO] = String(ticket_inicio_talonario).trim();
+    if (ticket_fin_talonario !== undefined) row[COL_PO.TICKET_FIN_TALONARIO] = String(ticket_fin_talonario).trim();
     if (estado !== undefined) row[COL_PO.ESTADO] = String(estado).toLowerCase().trim();
 
-    sheet.getRange(targetRow, 1, 1, 9).setValues([row]);
-    return jsonResponse({ success: true, message: 'Apoyada actualizada correctamente' });
+    sheet.getRange(targetRow, 1, 1, 12).setValues([row]);
+    return jsonResponse({ success: true, message: 'Pollada actualizada correctamente' });
   } catch(err) {
     return jsonResponse({ success: false, error: err.toString() });
   }
@@ -1772,7 +1793,7 @@ function handleDeletePollada(payload) {
     if (!targetRow) return jsonResponse({ success: false, error: 'Pollada no encontrada' });
 
     sheet.deleteRow(targetRow);
-    return jsonResponse({ success: true, message: 'Apoyada eliminada correctamente' });
+    return jsonResponse({ success: true, message: 'Pollada eliminada correctamente' });
   } catch(err) {
     return jsonResponse({ success: false, error: err.toString() });
   }
@@ -1878,7 +1899,7 @@ function handleRegistrarCompra(payload) {
   try {
     lock.waitLock(20000);
 
-    const { id_pollada, dni, cantidad_tickets, num_ticket_inicio, num_ticket_fin, monto_pagado, registrado_por } = payload;
+    const { id_pollada, dni, cantidad_tickets, num_ticket_inicio, num_ticket_fin, monto_pagado, registrado_por, numeros_tickets } = payload;
 
     if (!id_pollada || !dni || !cantidad_tickets) {
       return jsonResponse({ success: false, error: 'id_pollada, dni y cantidad_tickets son requeridos' });
@@ -1890,27 +1911,48 @@ function handleRegistrarCompra(payload) {
     const cantidadNum = parseInt(cantidad_tickets, 10);
     if (isNaN(cantidadNum) || cantidadNum < 1) return jsonResponse({ success: false, error: 'La cantidad de tickets debe ser al menos 1' });
 
-    // Verificar que la pollada exista y esté activa para venta
+    // Verificar que la pollada exista y esté activa para venta (buscar en Polladas y también en Eventos por compatibilidad)
     const sheetPO = getSheet(SHEET_POLLADAS);
-    if (!sheetPO) return jsonResponse({ success: false, error: 'No se encontró la pestaña Polladas' });
-
-    const dataPO = sheetPO.getDataRange().getValues();
     let pollada = null;
-    for (let i = 1; i < dataPO.length; i++) {
-      if (String(dataPO[i][COL_PO.ID_POLLADA] || '').trim() === String(id_pollada).trim()) {
-        pollada = {
-          id_pollada: String(dataPO[i][COL_PO.ID_POLLADA] || '').trim(),
-          titulo: String(dataPO[i][COL_PO.TITULO] || '').trim(),
-          precio_ticket: parseFloat(dataPO[i][COL_PO.PRECIO_TICKET] || '16'),
-          min_tickets: parseInt(dataPO[i][COL_PO.MIN_TICKETS] || '2', 10),
-          estado: String(dataPO[i][COL_PO.ESTADO] || '').trim().toLowerCase()
-        };
-        break;
+    if (sheetPO) {
+      const dataPO = sheetPO.getDataRange().getValues();
+      for (let i = 1; i < dataPO.length; i++) {
+        if (String(dataPO[i][COL_PO.ID_POLLADA] || '').trim() === String(id_pollada).trim()) {
+          pollada = {
+            id_pollada: String(dataPO[i][COL_PO.ID_POLLADA] || '').trim(),
+            titulo: String(dataPO[i][COL_PO.TITULO] || '').trim(),
+            precio_ticket: parseFloat(dataPO[i][COL_PO.PRECIO_TICKET] || '16'),
+            min_tickets: parseInt(dataPO[i][COL_PO.MIN_TICKETS] || '2', 10),
+            estado: String(dataPO[i][COL_PO.ESTADO] || '').trim().toLowerCase()
+          };
+          break;
+        }
       }
     }
-    if (!pollada) return jsonResponse({ success: false, error: 'La apoyada especificada no existe' });
-    if (pollada.estado === 'finalizado') return jsonResponse({ success: false, error: 'Esta apoyada ya finalizó y no acepta más registros' });
-    if (pollada.estado === 'recojo') return jsonResponse({ success: false, error: 'Esta apoyada ya está en fase de recojo. No se pueden registrar más compras.' });
+
+    // Fallback: Si fue creada provisionalmente en la pestaña Eventos
+    if (!pollada) {
+      const sheetEV = getSheet(SHEET_EVENTOS);
+      if (sheetEV) {
+        const dataEV = sheetEV.getDataRange().getValues();
+        for (let i = 1; i < dataEV.length; i++) {
+          if (String(dataEV[i][COL_EV.ID_EVENTO] || '').trim() === String(id_pollada).trim()) {
+            pollada = {
+              id_pollada: String(dataEV[i][COL_EV.ID_EVENTO] || '').trim(),
+              titulo: String(dataEV[i][COL_EV.TITULO] || '').trim(),
+              precio_ticket: 16,
+              min_tickets: 2,
+              estado: String(dataEV[i][COL_EV.ESTADO] || 'activo').trim().toLowerCase()
+            };
+            break;
+          }
+        }
+      }
+    }
+
+    if (!pollada) return jsonResponse({ success: false, error: 'La pollada especificada no existe' });
+    if (pollada.estado === 'finalizado') return jsonResponse({ success: false, error: 'Esta pollada ya finalizó y no acepta más registros' });
+    if (pollada.estado === 'recojo') return jsonResponse({ success: false, error: 'Esta pollada ya está en fase de recojo. No se pueden registrar más compras.' });
 
     if (cantidadNum < pollada.min_tickets) {
       return jsonResponse({ success: false, error: `El mínimo de tickets por militante es ${pollada.min_tickets}` });
@@ -1951,8 +1993,20 @@ function handleRegistrarCompra(payload) {
         return jsonResponse({
           success: false,
           alreadyRegistered: true,
-          error: `${militante.nombres} ya tiene ${dataTK[i][COL_TK.CANTIDAD_TICKETS]} ticket(s) comprado(s) para esta apoyada`
+          error: `${militante.nombres} ya tiene ${dataTK[i][COL_TK.CANTIDAD_TICKETS]} ticket(s) comprado(s) para esta pollada`
         });
+      }
+    }
+
+    // Procesar números de tickets individuales o rango
+    let tktInicioStr = String(num_ticket_inicio || '').trim();
+    let tktFinStr = String(num_ticket_fin || '').trim();
+    if (numeros_tickets) {
+      if (Array.isArray(numeros_tickets) && numeros_tickets.length > 0) {
+        tktInicioStr = numeros_tickets.map(function(s){ return String(s).trim(); }).filter(Boolean).join(', ');
+        tktFinStr = String(numeros_tickets[numeros_tickets.length - 1] || '').trim();
+      } else if (typeof numeros_tickets === 'string') {
+        tktInicioStr = numeros_tickets.trim();
       }
     }
 
@@ -1970,8 +2024,8 @@ function handleRegistrarCompra(payload) {
       militante.apellidos,
       militante.base,
       cantidadNum,
-      String(num_ticket_inicio || '').trim(),
-      String(num_ticket_fin || '').trim(),
+      tktInicioStr,
+      tktFinStr,
       montoFinal,
       'comprado',
       String(registrado_por || '').trim(),
@@ -2092,7 +2146,7 @@ function handleVerificarTicket(payload) {
     return jsonResponse({
       success: false,
       notFound: true,
-      error: `El DNI ${cleanDni} no tiene tickets registrados para esta apoyada`
+      error: `El DNI ${cleanDni} no tiene tickets registrados para esta pollada`
     });
   } catch(err) {
     return jsonResponse({ success: false, error: 'Error al verificar ticket: ' + err.toString() });
@@ -2171,7 +2225,7 @@ function handleRegistrarEntrega(payload) {
     return jsonResponse({
       success: false,
       notFound: true,
-      error: `El DNI ${cleanDni} no tiene tickets registrados para esta apoyada`
+      error: `El DNI ${cleanDni} no tiene tickets registrados para esta pollada`
     });
   } catch(err) {
     return jsonResponse({ success: false, error: 'Error al registrar entrega: ' + err.toString() });
@@ -2219,3 +2273,27 @@ function handleCancelarCompra(payload) {
     return jsonResponse({ success: false, error: err.toString() });
   }
 }
+
+/**
+ * Función de utilidad para crear manualmente las pestañas de Polladas y Tickets si se desea ejecutar desde el editor.
+ */
+function crearPestanasPolladaManualmente() {
+  const ss = getSpreadsheet();
+  let sheetPO = ss.getSheetByName('Polladas');
+  if (!sheetPO) {
+    sheetPO = ss.insertSheet('Polladas');
+    sheetPO.appendRow(['ID_POLLADA', 'TITULO', 'FECHA', 'HORA', 'LUGAR', 'PRECIO_TICKET', 'MIN_TICKETS', 'ESTADO', 'CREADO_EN', 'TOTAL_ESTIMADO', 'TICKET_INICIO_TALONARIO', 'TICKET_FIN_TALONARIO']);
+    sheetPO.getRange(1, 1, 1, 12).setFontWeight('bold').setBackground('#FEF3C7');
+  }
+
+  let sheetTK = ss.getSheetByName('Tickets_Pollada');
+  if (!sheetTK) {
+    sheetTK = ss.insertSheet('Tickets_Pollada');
+    sheetTK.appendRow(['ID_COMPRA', 'ID_POLLADA', 'TITULO_POLLADA', 'DNI', 'NOMBRES', 'APELLIDOS', 'BASE', 'CANTIDAD_TICKETS', 'NUM_TICKET_INICIO', 'NUM_TICKET_FIN', 'MONTO_PAGADO', 'ESTADO', 'REGISTRADO_POR', 'FECHA_COMPRA', 'FECHA_VERIFICACION', 'FECHA_ENTREGA']);
+    sheetTK.getRange(1, 1, 1, 16).setFontWeight('bold').setBackground('#FEF3C7');
+  }
+
+  Logger.log('✅ Pestañas Polladas y Tickets_Pollada creadas exitosamente');
+  return '✅ Pestañas Polladas y Tickets_Pollada creadas exitosamente';
+}
+
