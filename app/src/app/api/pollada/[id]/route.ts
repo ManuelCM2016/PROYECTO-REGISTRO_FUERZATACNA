@@ -3,6 +3,9 @@ import { getSession } from '@/lib/auth';
 import { getPolladaById, updatePollada, deletePollada, deleteEvento } from '@/lib/google-sheets';
 import { deleteLocalPollada, saveLocalPollada } from '@/lib/pollada-storage';
 
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }

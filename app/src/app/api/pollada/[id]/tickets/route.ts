@@ -4,6 +4,9 @@ import { getTicketsPollada, registrarCompra, searchMilitantes } from '@/lib/goog
 import { getLocalTickets, addLocalTicket } from '@/lib/pollada-storage';
 import type { TicketPollada } from '@/types';
 
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -31,7 +34,18 @@ export async function GET(
       // Usar tickets locales
     }
 
-    return NextResponse.json({ success: true, data: Array.from(ticketMap.values()) });
+    return NextResponse.json(
+      { success: true, data: Array.from(ticketMap.values()) },
+      {
+        headers: {
+          'Cache-Control': forceFresh
+            ? 'no-store, no-cache, must-revalidate, proxy-revalidate'
+            : 'public, s-maxage=10, stale-while-revalidate=20',
+          Pragma: 'no-cache',
+          Expires: '0',
+        },
+      }
+    );
   } catch (error) {
     console.error('Error getting tickets pollada:', error);
     return NextResponse.json({ success: false, error: 'Error al consultar tickets' }, { status: 500 });

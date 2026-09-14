@@ -3,6 +3,9 @@ import { getSession } from '@/lib/auth';
 import { registrarEntrega } from '@/lib/google-sheets';
 import { markLocalTicketDelivered, getLocalTickets } from '@/lib/pollada-storage';
 
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -15,28 +18,27 @@ export async function POST(
 
     const { id } = await params;
     const body = await request.json();
-    const { dni } = body;
+    const { dni, id_compra } = body;
 
-    if (!dni) {
-      return NextResponse.json({ success: false, error: 'DNI es requerido' }, { status: 400 });
+    if (!dni && !id_compra) {
+      return NextResponse.json({ success: false, error: 'DNI o ID de compra es requerido' }, { status: 400 });
     }
 
-    const cleanDni = String(dni).replace(/\D/g, '').trim();
-    if (cleanDni.length < 8) {
-      return NextResponse.json({ success: false, error: 'DNI inválido' }, { status: 400 });
-    }
+    const cleanDni = dni ? String(dni).replace(/\D/g, '').trim() : '';
 
     // Verificar si en local ya está entregado
-    const localTickets = getLocalTickets(id);
-    const existing = localTickets.find((t) => t.dni === cleanDni && t.estado !== 'cancelado');
+    if (cleanDni) {
+      const localTickets = getLocalTickets(id);
+      const existing = localTickets.find((t) => t.dni === cleanDni && t.estado !== 'cancelado');
 
-    if (existing && existing.estado === 'entregado') {
-      return NextResponse.json({
-        success: false,
-        alreadyDelivered: true,
-        error: `🚨 ALERTA: ${existing.nombres} ${existing.apellidos} YA RECOGIÓ sus ${existing.cantidad_tickets} pollada(s) el ${existing.fecha_entrega || 'previamente'}.`,
-        data: existing,
-      });
+      if (existing && existing.estado === 'entregado') {
+        return NextResponse.json({
+          success: false,
+          alreadyDelivered: true,
+          error: `🚨 ALERTA: ${existing.nombres} ${existing.apellidos} YA RECOGIÓ sus ${existing.cantidad_tickets} pollada(s) el ${existing.fecha_entrega || 'previamente'}.`,
+          data: existing,
+        });
+      }
     }
 
     // Intentar registrar en Google Sheets
@@ -45,35 +47,44 @@ export async function POST(
       gsResult = await registrarEntrega({
         id_pollada: id,
         dni: cleanDni,
+        id_compra,
         entregado_por: session.username,
       });
-    } catch {
-      // Usar fallback local
+    } catch (err: any) {
+      console.error('Error llamando a Google Sheets registrarEntrega:', err);
     }
 
-    if (gsResult && gsResult.success) {
-      markLocalTicketDelivered(id, cleanDni, session.username);
-      return NextResponse.json(gsResult);
+    if (gsResult) {
+      if (gsResult.success) {
+        if (cleanDni) markLocalTicketDelivered(id, cleanDni, session.username);
+        return NextResponse.json(gsResult);
+      }
+
+      if (gsResult.alreadyDelivered) {
+        return NextResponse.json(gsResult);
+      }
+
+      if (gsResult.error) {
+        return NextResponse.json({ success: false, error: gsResult.error }, { status: 400 });
+      }
     }
 
-    if (gsResult && gsResult.alreadyDelivered) {
-      return NextResponse.json(gsResult);
-    }
-
-    // Fallback local
-    const updated = markLocalTicketDelivered(id, cleanDni, session.username);
-    if (updated) {
-      return NextResponse.json({
-        success: true,
-        message: `🍗 Entrega confirmada para ${updated.nombres} ${updated.apellidos} (${updated.cantidad_tickets} pollada(s))`,
-        data: updated,
-      });
+    // Fallback local solo si Google Sheets falló la conexión
+    if (cleanDni) {
+      const updated = markLocalTicketDelivered(id, cleanDni, session.username);
+      if (updated) {
+        return NextResponse.json({
+          success: true,
+          message: `🍗 Entrega confirmada para ${updated.nombres} ${updated.apellidos} (${updated.cantidad_tickets} pollada(s))`,
+          data: updated,
+        });
+      }
     }
 
     return NextResponse.json({
       success: false,
       error: `El DNI ${cleanDni} no tiene tickets registrados para esta pollada`,
-    });
+    }, { status: 404 });
   } catch (error) {
     console.error('Error registrando entrega:', error);
     return NextResponse.json({ success: false, error: 'Error al registrar la entrega' }, { status: 500 });

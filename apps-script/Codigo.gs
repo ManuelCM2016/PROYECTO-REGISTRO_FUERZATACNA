@@ -292,6 +292,12 @@ function isPhoneMatch(phone1, phone2) {
  */
 function cleanSheetDate(val) {
   if (!val) return '';
+  if (typeof val === 'string') {
+    const trimmed = val.trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+      return trimmed;
+    }
+  }
   if (val instanceof Date) {
     return Utilities.formatDate(val, Session.getScriptTimeZone() || 'America/Lima', 'yyyy-MM-dd');
   }
@@ -309,6 +315,13 @@ function cleanSheetDate(val) {
  */
 function cleanSheetTime(val) {
   if (!val) return '';
+  if (typeof val === 'string') {
+    const trimmed = val.trim();
+    if (/^\d{1,2}:\d{2}$/.test(trimmed)) {
+      const parts = trimmed.split(':');
+      return parts[0].padStart(2, '0') + ':' + parts[1];
+    }
+  }
   if (val instanceof Date) {
     return Utilities.formatDate(val, Session.getScriptTimeZone() || 'America/Lima', 'HH:mm');
   }
@@ -325,6 +338,12 @@ function cleanSheetTime(val) {
  */
 function cleanSheetDateTime(val) {
   if (!val) return '';
+  if (typeof val === 'string') {
+    const trimmed = val.trim();
+    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(trimmed)) {
+      return trimmed;
+    }
+  }
   if (val instanceof Date) {
     return Utilities.formatDate(val, Session.getScriptTimeZone() || 'America/Lima', 'yyyy-MM-dd HH:mm:ss');
   }
@@ -1563,7 +1582,7 @@ function handleMarcarAsistencia(payload) {
 // ============ POLLADAS (v3.0) ============
 
 /**
- * Lista todas las polladas/polladas registradas.
+ * Lista todas las polladas registradas.
  */
 function handleGetPolladas() {
   try {
@@ -1577,10 +1596,20 @@ function handleGetPolladas() {
     const sheetTK = getSheet(SHEET_TICKETS_POLLADA);
     const tkData = sheetTK ? sheetTK.getDataRange().getValues() : [];
 
+    const seenEntries = new Set();
+
     for (let i = 1; i < data.length; i++) {
       const row = data[i];
       const id = String(row[COL_PO.ID_POLLADA] || '').trim();
       if (!id) continue;
+
+      const cleanTit = String(row[COL_PO.TITULO] || '').trim().toUpperCase();
+      const cleanFec = cleanSheetDate(row[COL_PO.FECHA]) || String(row[COL_PO.FECHA] || '').trim();
+      const dedupKey = cleanTit + '::' + cleanFec;
+
+      // Si hay duplicados exactos generados por envíos dobles en la hoja, omitirlos
+      if (seenEntries.has(dedupKey)) continue;
+      seenEntries.add(dedupKey);
 
       // Calcular estadísticas
       let totalTickets = 0, totalRecaudado = 0, totalEntregados = 0;
@@ -1602,15 +1631,15 @@ function handleGetPolladas() {
       polladas.push({
         rowIndex: i + 1,
         id_pollada: id,
-        titulo: String(row[COL_PO.TITULO] || '').trim(),
-        fecha: String(row[COL_PO.FECHA] || '').trim(),
-        hora: String(row[COL_PO.HORA] || '').trim(),
+        titulo: cleanTit,
+        fecha: cleanFec,
+        hora: cleanSheetTime(row[COL_PO.HORA]) || String(row[COL_PO.HORA] || '').trim(),
         lugar: String(row[COL_PO.LUGAR] || '').trim(),
         precio_ticket: parseFloat(row[COL_PO.PRECIO_TICKET] || '16'),
         min_tickets: parseInt(row[COL_PO.MIN_TICKETS] || '2', 10),
         total_estimado: parseInt(row[COL_PO.TOTAL_ESTIMADO] || '1000', 10),
-        ticket_inicio_talonario: String(row[COL_PO.TICKET_INICIO_TALONARIO] || '').trim(),
-        ticket_fin_talonario: String(row[COL_PO.TICKET_FIN_TALONARIO] || '').trim(),
+        ticket_inicio_talonario: String(row[COL_PO.TICKET_INICIO_TALONARIO] || '5000').trim(),
+        ticket_fin_talonario: String(row[COL_PO.TICKET_FIN_TALONARIO] || '6000').trim(),
         estado: String(row[COL_PO.ESTADO] || 'activo').trim().toLowerCase(),
         creado_en: cleanSheetDateTime(row[COL_PO.CREADO_EN]),
         total_tickets_vendidos: totalTickets,
@@ -1645,14 +1674,14 @@ function handleGetPolladaById(id_pollada) {
             rowIndex: i + 1,
             id_pollada: String(row[COL_PO.ID_POLLADA] || '').trim(),
             titulo: String(row[COL_PO.TITULO] || '').trim(),
-            fecha: String(row[COL_PO.FECHA] || '').trim(),
-            hora: String(row[COL_PO.HORA] || '').trim(),
+            fecha: cleanSheetDate(row[COL_PO.FECHA]) || String(row[COL_PO.FECHA] || '').trim(),
+            hora: cleanSheetTime(row[COL_PO.HORA]) || String(row[COL_PO.HORA] || '').trim(),
             lugar: String(row[COL_PO.LUGAR] || '').trim(),
             precio_ticket: parseFloat(row[COL_PO.PRECIO_TICKET] || '16'),
             min_tickets: parseInt(row[COL_PO.MIN_TICKETS] || '2', 10),
             total_estimado: parseInt(row[COL_PO.TOTAL_ESTIMADO] || '1000', 10),
-            ticket_inicio_talonario: String(row[COL_PO.TICKET_INICIO_TALONARIO] || '').trim(),
-            ticket_fin_talonario: String(row[COL_PO.TICKET_FIN_TALONARIO] || '').trim(),
+            ticket_inicio_talonario: String(row[COL_PO.TICKET_INICIO_TALONARIO] || '5000').trim(),
+            ticket_fin_talonario: String(row[COL_PO.TICKET_FIN_TALONARIO] || '6000').trim(),
             estado: String(row[COL_PO.ESTADO] || 'activo').trim().toLowerCase(),
             creado_en: cleanSheetDateTime(row[COL_PO.CREADO_EN])
           }
@@ -1666,15 +1695,54 @@ function handleGetPolladaById(id_pollada) {
 }
 
 /**
- * Crea una nueva pollada pro-fondos.
+ * Crea una nueva pollada pro-fondos con bloqueo atómico anti-duplicados.
  */
 function handleAddPollada(payload) {
+  const lock = LockService.getScriptLock();
   try {
+    lock.waitLock(15000);
     const { titulo, fecha, hora, lugar, precio_ticket, min_tickets, total_estimado, ticket_inicio_talonario, ticket_fin_talonario } = payload;
     if (!titulo || !fecha) return jsonResponse({ success: false, error: 'Título y fecha son requeridos' });
 
     const sheet = getSheet(SHEET_POLLADAS);
     if (!sheet) return jsonResponse({ success: false, error: 'No se encontró la pestaña Polladas' });
+
+    const cleanTitle = String(titulo).trim().toUpperCase();
+    const cleanF = cleanSheetDate(fecha) || String(fecha).trim();
+    const cleanH = cleanSheetTime(hora) || String(hora || '').trim();
+
+    // 1. CHEQUEO ANTI-DUPLICADOS ATÓMICO:
+    // Si ya existe una pollada creada con el mismo título y la misma fecha (no finalizada),
+    // devolvemos la existente inmediatamente sin crear una fila nueva.
+    const data = sheet.getDataRange().getValues();
+    for (let i = 1; i < data.length; i++) {
+      const row = data[i];
+      const existingTitle = String(row[COL_PO.TITULO] || '').trim().toUpperCase();
+      const existingFecha = cleanSheetDate(row[COL_PO.FECHA]) || String(row[COL_PO.FECHA] || '').trim();
+      const existingEstado = String(row[COL_PO.ESTADO] || 'activo').trim().toLowerCase();
+
+      if (existingTitle === cleanTitle && existingFecha === cleanF && existingEstado !== 'finalizado') {
+        return jsonResponse({
+          success: true,
+          message: 'Pollada ya existente (duplicado evitado)',
+          data: {
+            id_pollada: String(row[COL_PO.ID_POLLADA] || '').trim(),
+            titulo: existingTitle,
+            fecha: existingFecha,
+            hora: cleanSheetTime(row[COL_PO.HORA]) || String(row[COL_PO.HORA] || '').trim(),
+            lugar: String(row[COL_PO.LUGAR] || '').trim(),
+            precio_ticket: parseFloat(row[COL_PO.PRECIO_TICKET] || '16'),
+            min_tickets: parseInt(row[COL_PO.MIN_TICKETS] || '2', 10),
+            total_estimado: parseInt(row[COL_PO.TOTAL_ESTIMADO] || '1000', 10),
+            ticket_inicio_talonario: String(row[COL_PO.TICKET_INICIO_TALONARIO] || '5000').trim(),
+            ticket_fin_talonario: String(row[COL_PO.TICKET_FIN_TALONARIO] || '6000').trim(),
+            estado: existingEstado,
+            creado_en: cleanSheetDateTime(row[COL_PO.CREADO_EN]),
+            rowIndex: i + 1
+          }
+        });
+      }
+    }
 
     const idPollada = 'POL-' + new Date().getTime().toString(36).toUpperCase();
     const nowStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone() || 'America/Lima', 'yyyy-MM-dd HH:mm:ss');
@@ -1686,31 +1754,35 @@ function handleAddPollada(payload) {
 
     const newRow = [
       idPollada,
-      String(titulo).trim().toUpperCase(),
-      String(fecha).trim(),
-      String(hora || '').trim(),
+      cleanTitle,
+      "'" + cleanF,
+      "'" + cleanH,
       String(lugar || '').trim(),
       precioFinal,
       minFinal,
       'activo',
       "'" + nowStr,
       totalEstimadoFinal,
-      tktInicioFinal,
-      tktFinFinal
+      "'" + tktInicioFinal,
+      "'" + tktFinFinal
     ];
 
     sheet.appendRow(newRow);
     const newRowIndex = sheet.getLastRow();
+    sheet.getRange(newRowIndex, COL_PO.FECHA + 1).setNumberFormat('@');
+    sheet.getRange(newRowIndex, COL_PO.HORA + 1).setNumberFormat('@');
     sheet.getRange(newRowIndex, COL_PO.CREADO_EN + 1).setNumberFormat('@');
+    sheet.getRange(newRowIndex, COL_PO.TICKET_INICIO_TALONARIO + 1).setNumberFormat('@');
+    sheet.getRange(newRowIndex, COL_PO.TICKET_FIN_TALONARIO + 1).setNumberFormat('@');
 
     return jsonResponse({
       success: true,
       message: 'Pollada creada exitosamente',
       data: {
         id_pollada: idPollada,
-        titulo: titulo.trim().toUpperCase(),
-        fecha,
-        hora: hora || '',
+        titulo: cleanTitle,
+        fecha: cleanF,
+        hora: cleanH,
         lugar: lugar || '',
         precio_ticket: precioFinal,
         min_tickets: minFinal,
@@ -1724,6 +1796,8 @@ function handleAddPollada(payload) {
     });
   } catch(err) {
     return jsonResponse({ success: false, error: err.toString() });
+  } finally {
+    try { lock.releaseLock(); } catch(e) {}
   }
 }
 
@@ -1731,7 +1805,9 @@ function handleAddPollada(payload) {
  * Actualiza una pollada existente.
  */
 function handleUpdatePollada(payload) {
+  const lock = LockService.getScriptLock();
   try {
+    lock.waitLock(15000);
     const { id_pollada, rowIndex, titulo, fecha, hora, lugar, precio_ticket, min_tickets, total_estimado, ticket_inicio_talonario, ticket_fin_talonario, estado } = payload;
     if (!id_pollada) return jsonResponse({ success: false, error: 'id_pollada requerido' });
 
@@ -1748,24 +1824,26 @@ function handleUpdatePollada(payload) {
         }
       }
     }
-    if (!targetRow) return jsonResponse({ success: false, error: 'Pollada no encontrada para actualizar' });
+    if (!targetRow) return jsonResponse({ success: false, error: 'Pollada no encontrada' });
 
     const row = sheet.getRange(targetRow, 1, 1, 12).getValues()[0];
     if (titulo !== undefined) row[COL_PO.TITULO] = String(titulo).trim().toUpperCase();
-    if (fecha !== undefined) row[COL_PO.FECHA] = String(fecha).trim();
-    if (hora !== undefined) row[COL_PO.HORA] = String(hora).trim();
+    if (fecha !== undefined) row[COL_PO.FECHA] = "'" + (cleanSheetDate(fecha) || String(fecha).trim());
+    if (hora !== undefined) row[COL_PO.HORA] = "'" + (cleanSheetTime(hora) || String(hora).trim());
     if (lugar !== undefined) row[COL_PO.LUGAR] = String(lugar).trim();
     if (precio_ticket !== undefined) row[COL_PO.PRECIO_TICKET] = parseFloat(precio_ticket) || 16;
     if (min_tickets !== undefined) row[COL_PO.MIN_TICKETS] = parseInt(min_tickets, 10) || 2;
     if (total_estimado !== undefined) row[COL_PO.TOTAL_ESTIMADO] = parseInt(total_estimado, 10) || 1000;
-    if (ticket_inicio_talonario !== undefined) row[COL_PO.TICKET_INICIO_TALONARIO] = String(ticket_inicio_talonario).trim();
-    if (ticket_fin_talonario !== undefined) row[COL_PO.TICKET_FIN_TALONARIO] = String(ticket_fin_talonario).trim();
+    if (ticket_inicio_talonario !== undefined) row[COL_PO.TICKET_INICIO_TALONARIO] = "'" + String(ticket_inicio_talonario).trim();
+    if (ticket_fin_talonario !== undefined) row[COL_PO.TICKET_FIN_TALONARIO] = "'" + String(ticket_fin_talonario).trim();
     if (estado !== undefined) row[COL_PO.ESTADO] = String(estado).toLowerCase().trim();
 
     sheet.getRange(targetRow, 1, 1, 12).setValues([row]);
     return jsonResponse({ success: true, message: 'Pollada actualizada correctamente' });
   } catch(err) {
     return jsonResponse({ success: false, error: err.toString() });
+  } finally {
+    try { lock.releaseLock(); } catch(e) {}
   }
 }
 
@@ -1812,18 +1890,26 @@ function handleGetTicketsPollada(id_pollada) {
 
     for (let i = 1; i < data.length; i++) {
       const row = data[i];
-      const rowIdPollada = String(row[COL_TK.ID_POLLADA] || '').trim();
-      if (id_pollada && rowIdPollada !== String(id_pollada).trim()) continue;
+      const rowDni = String(row[COL_TK.DNI] || '').replace(/\D/g, '').trim();
+      if (!rowDni) continue;
 
-      const id = String(row[COL_TK.ID_COMPRA] || '').trim();
-      if (!id) continue;
+      const rowIdPollada = String(row[COL_TK.ID_POLLADA] || '').trim();
+      if (id_pollada && String(id_pollada).trim() !== '' && rowIdPollada) {
+        const cleanReq = String(id_pollada).trim();
+        if (rowIdPollada !== cleanReq && !rowIdPollada.includes(cleanReq) && !cleanReq.includes(rowIdPollada)) {
+          continue;
+        }
+      }
+
+      let id = String(row[COL_TK.ID_COMPRA] || '').trim();
+      if (!id) id = 'TKT-' + (i + 1);
 
       tickets.push({
         rowIndex: i + 1,
         id_compra: id,
         id_pollada: rowIdPollada,
         titulo_pollada: String(row[COL_TK.TITULO_POLLADA] || '').trim(),
-        dni: String(row[COL_TK.DNI] || '').replace(/\D/g, '').trim(),
+        dni: rowDni,
         nombres: String(row[COL_TK.NOMBRES] || '').trim(),
         apellidos: String(row[COL_TK.APELLIDOS] || '').trim(),
         base: String(row[COL_TK.BASE] || '').trim(),
@@ -1850,7 +1936,7 @@ function handleGetTicketsPollada(id_pollada) {
  */
 function handleCheckTicketPollada(id_pollada, dni) {
   try {
-    if (!id_pollada || !dni) return jsonResponse({ success: false, error: 'id_pollada y dni requeridos' });
+    if (!dni) return jsonResponse({ success: false, error: 'dni requerido' });
 
     const cleanDni = String(dni).replace(/\D/g, '').trim();
     const sheet = getSheet(SHEET_TICKETS_POLLADA);
@@ -1860,14 +1946,27 @@ function handleCheckTicketPollada(id_pollada, dni) {
     for (let i = 1; i < data.length; i++) {
       const row = data[i];
       const rowDni = String(row[COL_TK.DNI] || '').replace(/\D/g, '').trim();
-      const rowIdPollada = String(row[COL_TK.ID_POLLADA] || '').trim();
-      if (rowDni === cleanDni && rowIdPollada === String(id_pollada).trim()) {
+      const rowPollada = String(row[COL_TK.ID_POLLADA] || '').trim();
+
+      if (rowDni === cleanDni) {
+        if (id_pollada && String(id_pollada).trim() !== '' && rowPollada) {
+          const cleanReq = String(id_pollada).trim();
+          if (rowPollada !== cleanReq && !rowPollada.includes(cleanReq) && !cleanReq.includes(rowPollada)) {
+            continue;
+          }
+        }
+
+        let idCompra = String(row[COL_TK.ID_COMPRA] || '').trim();
+        if (!idCompra) idCompra = 'TKT-' + (i + 1);
+
         return jsonResponse({
           success: true,
           found: true,
           data: {
             rowIndex: i + 1,
-            id_compra: String(row[COL_TK.ID_COMPRA] || '').trim(),
+            id_compra: idCompra,
+            id_pollada: rowPollada,
+            titulo_pollada: String(row[COL_TK.TITULO_POLLADA] || '').trim(),
             dni: rowDni,
             nombres: String(row[COL_TK.NOMBRES] || '').trim(),
             apellidos: String(row[COL_TK.APELLIDOS] || '').trim(),
@@ -2157,17 +2256,17 @@ function handleVerificarTicket(payload) {
 
 /**
  * Registra la entrega de la pollada en cocina.
- * Solo procede si el militante fue previamente verificado en puerta (estado='verificado').
+ * Procede si el militante compró sus tickets (estado='comprado' o 'verificado').
  */
 function handleRegistrarEntrega(payload) {
   const lock = LockService.getScriptLock();
   try {
     lock.waitLock(20000);
 
-    const { id_pollada, dni, entregado_por } = payload;
-    if (!id_pollada || !dni) return jsonResponse({ success: false, error: 'id_pollada y dni requeridos' });
+    const { id_pollada, dni, entregado_por, id_compra } = payload;
+    if (!dni && !id_compra) return jsonResponse({ success: false, error: 'dni o id_compra requeridos' });
 
-    const cleanDni = String(dni).replace(/\D/g, '').trim();
+    const cleanDni = dni ? String(dni).replace(/\D/g, '').trim() : '';
     const sheet = getSheet(SHEET_TICKETS_POLLADA);
     if (!sheet) return jsonResponse({ success: false, error: 'No se encontraron tickets registrados' });
 
@@ -2176,30 +2275,36 @@ function handleRegistrarEntrega(payload) {
       const row = data[i];
       const rowDni = String(row[COL_TK.DNI] || '').replace(/\D/g, '').trim();
       const rowPollada = String(row[COL_TK.ID_POLLADA] || '').trim();
-      if (rowDni !== cleanDni || rowPollada !== String(id_pollada).trim()) continue;
+      const rowIdCompra = String(row[COL_TK.ID_COMPRA] || '').trim();
 
-      const estado = String(row[COL_TK.ESTADO] || '').toLowerCase();
+      let matches = false;
+      if (id_compra && rowIdCompra === String(id_compra).trim()) {
+        matches = true;
+      } else if (cleanDni && rowDni === cleanDni) {
+        if (!id_pollada || rowPollada === String(id_pollada).trim() || rowPollada === '' || String(id_pollada).trim() === '') {
+          matches = true;
+        } else if (rowPollada.startsWith('POL-') && String(id_pollada).trim().startsWith('POL-')) {
+          matches = true;
+        }
+      }
+
+      if (!matches) continue;
+
+      const estado = String(row[COL_TK.ESTADO] || '').toLowerCase().trim();
 
       if (estado === 'cancelado') {
         return jsonResponse({ success: false, error: 'Este ticket fue cancelado y no es válido' });
-      }
-      if (estado === 'comprado') {
-        return jsonResponse({
-          success: false,
-          notVerified: true,
-          error: `${row[COL_TK.NOMBRES]} no ha pasado por el control de puerta. No puede recoger sin verificación previa.`
-        });
       }
       if (estado === 'entregado') {
         const horaEntrega = cleanSheetDateTime(row[COL_TK.FECHA_ENTREGA]);
         return jsonResponse({
           success: false,
           alreadyDelivered: true,
-          error: `${row[COL_TK.NOMBRES]} ya recibió su pollada a las ${horaEntrega}. No puede recoger nuevamente.`
+          error: `🚨 ALERTA: ${row[COL_TK.NOMBRES]} ya recibió su pollada a las ${horaEntrega || 'previamente'}. No puede recoger nuevamente.`
         });
       }
 
-      // Registrar entrega (estado='verificado' → 'entregado')
+      // Procesar entrega directamente (tanto si estado es 'comprado' como si es 'verificado')
       const nowStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone() || 'America/Lima', 'yyyy-MM-dd HH:mm:ss');
       const rowIdx = i + 1;
       sheet.getRange(rowIdx, COL_TK.ESTADO + 1).setValue('entregado');
@@ -2210,7 +2315,8 @@ function handleRegistrarEntrega(payload) {
         success: true,
         message: `🍗 Entregado: ${row[COL_TK.NOMBRES]} ${row[COL_TK.APELLIDOS]} — ${cantidadTickets} porción(es)`,
         data: {
-          id_compra: String(row[COL_TK.ID_COMPRA] || '').trim(),
+          id_compra: rowIdCompra,
+          id_pollada: rowPollada,
           dni: rowDni,
           nombres: String(row[COL_TK.NOMBRES] || '').trim(),
           apellidos: String(row[COL_TK.APELLIDOS] || '').trim(),

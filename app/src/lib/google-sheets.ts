@@ -14,7 +14,7 @@ import type {
   TicketPollada,
 } from '@/types';
 
-const APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || '';
+const APPS_SCRIPT_URL = (process.env.APPS_SCRIPT_URL || '').trim();
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -126,7 +126,7 @@ async function appsScriptGet<T>(
           method: 'GET',
           redirect: 'follow',
           cache: 'no-store',
-          signal: AbortSignal.timeout(9000),
+          signal: AbortSignal.timeout(16000),
         });
 
         const text = await response.text();
@@ -189,6 +189,8 @@ async function appsScriptPost<T>(payload: Record<string, unknown>, retries = 2):
     invalidateCache(['getAsistencia', 'checkAsistencia', 'getEventos', 'getEventoById']);
   } else if (action.includes('Usuario')) {
     invalidateCache(['getUsuarios', 'findUsuario']);
+  } else if (action.includes('Pollada') || action.includes('Compra') || action.includes('Ticket') || action.includes('Entrega')) {
+    invalidateCache(['getPolladas', 'getPolladaById', 'getTicketsPollada', 'checkTicketPollada', 'getEventos']);
   }
 
   let lastError: unknown = null;
@@ -218,7 +220,7 @@ async function appsScriptPost<T>(payload: Record<string, unknown>, retries = 2):
             'Content-Type': 'text/plain',
           },
           redirect: 'follow',
-          signal: AbortSignal.timeout(12000),
+          signal: AbortSignal.timeout(18000),
         });
 
         const text = await response.text();
@@ -630,6 +632,7 @@ export async function verificarTicket(data: {
 export async function registrarEntrega(data: {
   id_pollada: string;
   dni: string;
+  id_compra?: string;
   entregado_por?: string;
 }): Promise<ApiResponse<TicketPollada & { notVerified?: boolean; alreadyDelivered?: boolean; notFound?: boolean }>> {
   return appsScriptPost<ApiResponse<TicketPollada & { notVerified?: boolean; alreadyDelivered?: boolean; notFound?: boolean }>>(

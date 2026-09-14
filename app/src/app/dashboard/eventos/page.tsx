@@ -58,6 +58,7 @@ export default function EventosPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [submittingEvent, setSubmittingEvent] = useState(false);
+  const isSubmittingEventRef = useRef(false);
   const [createType, setCreateType] = useState<'evento' | 'pollada'>('evento');
   const [newEventData, setNewEventData] = useState({
     titulo: '',
@@ -104,6 +105,7 @@ export default function EventosPage() {
   const [entregaSuccessMsg, setEntregaSuccessMsg] = useState<string | null>(null);
   const [entregaScannerActive, setEntregaScannerActive] = useState(false);
   const entregaScannerRef = useRef<any>(null);
+  const entregaResultRef = useRef<HTMLDivElement | null>(null);
 
   // Estados de Tab 3 (Padrón de Tickets)
   const [ticketSearchQuery, setTicketSearchQuery] = useState('');
@@ -268,12 +270,25 @@ export default function EventosPage() {
     };
   }, [selectedPollada, polladaTab, ventaScannerActive]);
 
+  // Auto-scroll hacia los datos del militante al detectar o verificar tickets en entrega
+  useEffect(() => {
+    if (entregaTicketResult && entregaResultRef.current) {
+      setTimeout(() => {
+        entregaResultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 120);
+    }
+  }, [entregaTicketResult]);
+
   // ============================================
   // CARGAS DE DATOS
   // ============================================
 
   const loadEventos = async (forceFresh = false) => {
-    if (!forceFresh && typeof window !== 'undefined') {
+    if (forceFresh && typeof window !== 'undefined') {
+      try {
+        sessionStorage.removeItem('ft_cache_eventos');
+      } catch { }
+    } else if (!forceFresh && typeof window !== 'undefined') {
       try {
         const cachedStr = sessionStorage.getItem('ft_cache_eventos');
         if (cachedStr) {
@@ -293,8 +308,8 @@ export default function EventosPage() {
     }
 
     try {
-      const url = forceFresh ? '/api/eventos?fresh=true' : '/api/eventos';
-      const res = await fetch(url);
+      const url = forceFresh ? `/api/eventos?fresh=true&_t=${Date.now()}` : `/api/eventos?_t=${Date.now()}`;
+      const res = await fetch(url, { cache: 'no-store' });
       const data = await res.json();
       if (data.success && data.data) {
         setEventos(data.data);
@@ -315,16 +330,33 @@ export default function EventosPage() {
   const loadPolladas = async (forceFresh = false) => {
     setLoadingPolladas(true);
     try {
-      const url = forceFresh ? '/api/pollada?fresh=true' : '/api/pollada';
-      const res = await fetch(url);
+      const url = forceFresh ? `/api/pollada?fresh=true&_t=${Date.now()}` : `/api/pollada?_t=${Date.now()}`;
+      const res = await fetch(url, { cache: 'no-store' });
       const data = await res.json();
       if (data.success && Array.isArray(data.data)) {
         setPolladas(data.data);
       }
-    } catch {
-      // Ignorar silenciosamente
+    } catch (err) {
+      console.error('Error al cargar polladas:', err);
     } finally {
       setLoadingPolladas(false);
+    }
+  };
+
+  const handleRefreshAll = async () => {
+    setRefreshing(true);
+    if (typeof window !== 'undefined') {
+      try {
+        sessionStorage.removeItem('ft_cache_eventos');
+      } catch { }
+    }
+    try {
+      await Promise.all([loadEventos(true), loadPolladas(true)]);
+      addToast('success', 'Datos actualizados desde Google Sheets');
+    } catch {
+      addToast('error', 'Error al actualizar datos');
+    } finally {
+      setRefreshing(false);
     }
   };
 
@@ -445,11 +477,14 @@ export default function EventosPage() {
 
   const handleCreateEvent = async (e: FormEvent) => {
     e.preventDefault();
+    if (isSubmittingEventRef.current) return;
+
     if (!newEventData.titulo.trim() || !newEventData.fecha) {
       addToast('error', 'Título y fecha son requeridos');
       return;
     }
 
+    isSubmittingEventRef.current = true;
     setSubmittingEvent(true);
     try {
       if (createType === 'evento') {
@@ -516,6 +551,7 @@ export default function EventosPage() {
     } catch {
       addToast('error', 'Error de conexión');
     } finally {
+      isSubmittingEventRef.current = false;
       setSubmittingEvent(false);
     }
   };
@@ -840,6 +876,10 @@ export default function EventosPage() {
         } else {
           playSuccessBeep();
         }
+        // Deslizar automáticamente hacia abajo para enfocar los datos encontrados
+        setTimeout(() => {
+          entregaResultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 120);
       } else {
         addToast('warning', `El DNI ${cleanDni} no tiene compra de tickets registrada para esta pollada`);
       }
@@ -858,7 +898,10 @@ export default function EventosPage() {
       const res = await fetch(`/api/pollada/${selectedPollada.id_pollada}/entregar`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dni: entregaTicketResult.dni }),
+        body: JSON.stringify({
+          dni: entregaTicketResult.dni,
+          id_compra: entregaTicketResult.id_compra,
+        }),
       });
 
       const data = await res.json();
@@ -905,11 +948,18 @@ export default function EventosPage() {
       const scanner = new Html5Qrcode(scannerId);
       entregaScannerRef.current = scanner;
 
+      const qrboxFunction = (viewfinderWidth: number, viewfinderHeight: number) => {
+        const minEdge = Math.min(viewfinderWidth, viewfinderHeight);
+        // Margen visualmente amplio (88% del área) para escanear credenciales al instante sin reducir el marco
+        const edgeSize = Math.min(Math.max(Math.floor(minEdge * 0.88), 260), 340);
+        return { width: edgeSize, height: edgeSize };
+      };
+
       await scanner.start(
         { facingMode: 'environment' },
         {
           fps: 15,
-          qrbox: { width: 240, height: 240 },
+          qrbox: qrboxFunction,
         },
         (decodedText) => {
           // Extraer DNI del código QR
@@ -925,6 +975,10 @@ export default function EventosPage() {
           if (extractedDni) {
             setEntregaDni(extractedDni);
             handleBuscarEntrega(extractedDni);
+            // Auto-deslizar suavemente hacia abajo para mostrar la persona encontrada
+            setTimeout(() => {
+              entregaResultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }, 150);
           }
         },
         () => { }
@@ -965,11 +1019,17 @@ export default function EventosPage() {
       const scanner = new Html5Qrcode(scannerId);
       ventaScannerRef.current = scanner;
 
+      const qrboxFunction = (viewfinderWidth: number, viewfinderHeight: number) => {
+        const minEdge = Math.min(viewfinderWidth, viewfinderHeight);
+        const edgeSize = Math.min(Math.max(Math.floor(minEdge * 0.88), 260), 340);
+        return { width: edgeSize, height: edgeSize };
+      };
+
       await scanner.start(
         { facingMode: 'environment' },
         {
           fps: 15,
-          qrbox: { width: 240, height: 240 },
+          qrbox: qrboxFunction,
         },
         (decodedText) => {
           let extractedDni = '';
@@ -1477,13 +1537,11 @@ export default function EventosPage() {
 
             <div className="flex items-center gap-2">
               <Button
-                onClick={() => {
-                  loadEventos(true);
-                  loadPolladas(true);
-                }}
+                onClick={handleRefreshAll}
                 variant="secondary"
                 size="sm"
                 loading={refreshing}
+                disabled={refreshing}
                 icon={
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
@@ -2074,8 +2132,8 @@ export default function EventosPage() {
 
                     {/* Contenedor del Escáner de Cámara */}
                     {ventaScannerActive && (
-                      <div className="rounded-2xl overflow-hidden border-2 border-amber-500/50 bg-black p-2 space-y-2">
-                        <div id="venta-cam-reader" className="w-full aspect-square max-w-xs mx-auto rounded-xl overflow-hidden" />
+                      <div className="rounded-2xl overflow-hidden border-2 border-amber-500/50 bg-black p-2 space-y-2 shadow-2xl">
+                        <div id="venta-cam-reader" className="w-full aspect-[4/3] max-w-sm mx-auto rounded-xl overflow-hidden" />
                         <p className="text-[11px] text-amber-300 text-center font-semibold">
                           Apunta la cámara al código QR de la credencial física o digital del militante
                         </p>
@@ -2384,8 +2442,8 @@ export default function EventosPage() {
 
                 {/* Contenedor de la Cámara de Entrega */}
                 {entregaScannerActive && (
-                  <div className="rounded-2xl overflow-hidden border border-amber-500/40 bg-black p-2">
-                    <div id="entrega-cam-reader" className="w-full aspect-square max-w-sm mx-auto rounded-xl overflow-hidden" />
+                  <div className="rounded-2xl overflow-hidden border border-amber-500/40 bg-black p-2 shadow-2xl">
+                    <div id="entrega-cam-reader" className="w-full aspect-[4/3] max-w-md mx-auto rounded-xl overflow-hidden" />
                   </div>
                 )}
 
@@ -2422,7 +2480,9 @@ export default function EventosPage() {
                 {/* Resultado de la Verificación de Entrega */}
                 {entregaTicketResult && (
                   <div
-                    className={`p-6 rounded-2xl border-2 space-y-4 ${
+                    ref={entregaResultRef}
+                    id="entrega-ticket-result-card"
+                    className={`p-6 rounded-2xl border-2 space-y-4 animate-in fade-in zoom-in-95 duration-200 ${
                       entregaTicketResult.estado === 'entregado'
                         ? 'bg-rose-500/10 border-rose-500/50 text-rose-200'
                         : 'bg-emerald-500/10 border-emerald-500/50 text-emerald-200'
@@ -3050,7 +3110,13 @@ export default function EventosPage() {
             >
               Cancelar
             </Button>
-            <Button type="submit" loading={submittingEvent} variant="accent" className="flex-1">
+            <Button
+              type="submit"
+              loading={submittingEvent}
+              disabled={submittingEvent}
+              variant="accent"
+              className="flex-1"
+            >
               {createType === 'evento' ? 'Crear Evento' : '🍗 Crear Pollada'}
             </Button>
           </div>

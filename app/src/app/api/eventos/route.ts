@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth';
 import { getEventos, addEvento } from '@/lib/google-sheets';
 
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 export async function GET(request: NextRequest) {
   try {
     const session = await getSession();
@@ -18,7 +21,11 @@ export async function GET(request: NextRequest) {
     const result = await getEventos(forceFresh);
     return NextResponse.json(result, {
       headers: {
-        'Cache-Control': 'public, s-maxage=15, stale-while-revalidate=30',
+        'Cache-Control': forceFresh
+          ? 'no-store, no-cache, must-revalidate, proxy-revalidate'
+          : 'public, s-maxage=10, stale-while-revalidate=20',
+        Pragma: 'no-cache',
+        Expires: '0',
       },
     });
   } catch (error) {
